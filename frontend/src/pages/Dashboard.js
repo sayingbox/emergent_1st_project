@@ -1,0 +1,119 @@
+import { useEffect, useState } from "react";
+import { useNavigate, Link } from "react-router-dom";
+import { http, formatApiErrorDetail } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Card } from "@/components/ui/card";
+import { scoreColor } from "@/components/ScoreGauge";
+import { Link2, FileText, Sparkles, Trash2, ArrowUpRight, Loader2 } from "lucide-react";
+import { toast } from "sonner";
+
+const scoreLabel = (s) => (s >= 75 ? "Strong" : s >= 50 ? "Needs work" : "Poor");
+
+export default function Dashboard() {
+  const [tab, setTab] = useState("url");
+  const [url, setUrl] = useState("");
+  const [text, setText] = useState("");
+  const [query, setQuery] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [items, setItems] = useState([]);
+  const navigate = useNavigate();
+
+  const load = async () => {
+    try { const { data } = await http.get("/analyses"); setItems(data); } catch {}
+  };
+  useEffect(() => { load(); }, []);
+
+  const analyze = async () => {
+    const content = tab === "url" ? url.trim() : text.trim();
+    if (!content) { toast.error("Please provide content to analyze"); return; }
+    setLoading(true);
+    try {
+      const { data } = await http.post("/analyses", { input_type: tab, content, target_query: query || null });
+      toast.success("Analysis complete");
+      navigate(`/app/analysis/${data.id}`);
+    } catch (e) {
+      toast.error(formatApiErrorDetail(e.response?.data?.detail) || "Analysis failed");
+    } finally { setLoading(false); }
+  };
+
+  const del = async (id, e) => {
+    e.preventDefault(); e.stopPropagation();
+    await http.delete(`/analyses/${id}`);
+    toast.success("Deleted");
+    load();
+  };
+
+  return (
+    <div className="space-y-10">
+      <div>
+        <p className="text-xs tracking-[0.2em] uppercase font-bold text-[#002FA7]">Generative Engine Optimization</p>
+        <h1 className="font-head text-4xl sm:text-5xl font-extrabold tracking-tight mt-2">Score your content for AI answers</h1>
+        <p className="text-muted-foreground mt-3 max-w-2xl">Paste a URL or raw content. We audit clarity, structure, E-E-A-T, schema and question coverage — then tell you exactly how to get cited.</p>
+      </div>
+
+      <Card className="p-6 sm:p-8 rounded-lg border-border/60">
+        <Tabs value={tab} onValueChange={setTab}>
+          <TabsList className="mb-5">
+            <TabsTrigger value="url" data-testid="tab-url"><Link2 size={15} className="mr-2" /> From URL</TabsTrigger>
+            <TabsTrigger value="text" data-testid="tab-text"><FileText size={15} className="mr-2" /> Paste content</TabsTrigger>
+          </TabsList>
+          <TabsContent value="url">
+            <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://example.com/blog/post" data-testid="url-input" className="text-base" />
+          </TabsContent>
+          <TabsContent value="text">
+            <Textarea value={text} onChange={(e) => setText(e.target.value)} rows={8} data-testid="text-input"
+              placeholder="Paste raw text, markdown or HTML here…" className="font-mono text-sm" />
+          </TabsContent>
+        </Tabs>
+        <div className="mt-5">
+          <label className="text-xs tracking-[0.15em] uppercase font-bold text-muted-foreground">Target query (optional)</label>
+          <Input value={query} onChange={(e) => setQuery(e.target.value)} data-testid="query-input"
+            placeholder='e.g. "how to reduce churn for SaaS"' className="mt-1.5" />
+        </div>
+        <Button onClick={analyze} disabled={loading} data-testid="analyze-btn"
+          className="mt-6 bg-black text-white hover:bg-gray-800 h-11 px-6">
+          {loading ? <><Loader2 size={16} className="mr-2 animate-spin" /> Analyzing…</> : <><Sparkles size={16} className="mr-2" /> Run GEO audit</>}
+        </Button>
+      </Card>
+
+      <div>
+        <h2 className="font-head text-2xl font-bold tracking-tight mb-4">Recent analyses</h2>
+        {items.length === 0 ? (
+          <div className="border border-dashed border-border rounded-lg p-12 text-center text-muted-foreground grain">
+            <Sparkles className="mx-auto mb-3 opacity-40" />
+            <p>No analyses yet. Run your first GEO audit above.</p>
+          </div>
+        ) : (
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4" data-testid="analyses-list">
+            {items.map((it) => (
+              <Link key={it.id} to={`/app/analysis/${it.id}`} data-testid={`analysis-card-${it.id}`}
+                className="group block bg-white border border-border/60 rounded-lg p-5 transition-transform duration-200 hover:-translate-y-1 hover:shadow-lg">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="font-head font-bold truncate">{it.title}</p>
+                    <p className="text-xs text-muted-foreground truncate mt-0.5">{it.source_url || "Pasted content"}</p>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <div className="font-head text-3xl font-extrabold tabular-nums" style={{ color: scoreColor(it.overall_score) }}>{it.overall_score}</div>
+                    <div className="text-[10px] uppercase font-bold" style={{ color: scoreColor(it.overall_score) }}>{scoreLabel(it.overall_score)}</div>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between mt-4 pt-4 border-t border-border/60">
+                  <span className="text-xs text-muted-foreground">{new Date(it.created_at).toLocaleDateString()}</span>
+                  <div className="flex items-center gap-1">
+                    <button onClick={(e) => del(it.id, e)} data-testid={`delete-${it.id}`}
+                      className="p-1.5 rounded-md text-muted-foreground hover:text-red-600 hover:bg-red-50 transition-colors"><Trash2 size={15} /></button>
+                    <ArrowUpRight size={16} className="text-muted-foreground group-hover:text-black transition-colors" />
+                  </div>
+                </div>
+              </Link>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
