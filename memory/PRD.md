@@ -27,6 +27,16 @@ Build a tool that ingests content (URL or pasted text/markdown/HTML), scores it 
 - Full dashboard UI: analyze form, recent list, detail (gauge, dimensions, fixes, schema terminal viewer, simulator, gaps), history area charts.
 - Verified end-to-end via curl + screenshots.
 
+## Platform expansion (2026-08-09) — sidebar + GEO tools
+- Dark sidebar layout (Overview / Generative Engine (GEO) / Answer Engine (AEO)) matching requested design.
+- **Dashboard** (GET /api/dashboard): aggregate stats, content-score trend, recent activity, tools grid.
+- **Domain Analysis** (POST /api/domain/analyze): AI-readiness score, category breakdown, quick wins, top topics, competitors; past reports.
+- **Visibility Tracker** (POST /api/visibility): brand + prompts → per-engine mention/recommendation, visibility score, share of voice, recommendations.
+- **Citation Sources** (POST /api/citations): query + optional domain → ranked likely-cited sources + user-domain-cited banner.
+- **Reddit Finder** (POST /api/reddit): topic → relevant subreddits, discussion threads, content ideas.
+- All new GEO features are AI-simulated (Claude Sonnet 4.6). Content Optimizer moved to /app/optimizer.
+- Testing agent iteration_1: 100% backend + frontend pass.
+
 ## Backlog (P1/P2)
 - P1: Real "People Also Ask" scrape/API to augment gap finder.
 - P1: Re-analyze from a stored URL in one click (currently re-paste URL).
