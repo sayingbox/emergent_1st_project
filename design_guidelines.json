@@ -1,0 +1,146 @@
+{
+  "theme_strategy": "Primary Light Mode with stark, high-contrast borders (Swiss Brutalist inspired). Dark Mode togglable.",
+  "typography": {
+    "headings": {
+      "family": "'Manrope', sans-serif",
+      "import_url": "https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&display=swap",
+      "scale": {
+        "h1": "text-4xl sm:text-5xl tracking-tight font-extrabold",
+        "h2": "text-2xl sm:text-3xl tracking-tight font-bold",
+        "h3": "text-xl font-semibold",
+        "h4": "text-lg font-medium",
+        "overline": "text-xs tracking-[0.2em] uppercase font-bold"
+      }
+    },
+    "body": {
+      "family": "'IBM Plex Sans', sans-serif",
+      "import_url": "https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap",
+      "scale": {
+        "default": "text-sm",
+        "large": "text-base",
+        "small": "text-xs"
+      }
+    }
+  },
+  "colors": {
+    "archetype": "Archetype 4: Swiss & High-Contrast (Authority, Clarity, Truth)",
+    "palette": {
+      "background": "#FFFFFF",
+      "foreground": "#09090B",
+      "surface": "#F9FAFB",
+      "muted": "#F3F4F6",
+      "muted_foreground": "#6B7280",
+      "border": "#E5E7EB",
+      "primary": "#000000",
+      "primary_foreground": "#FFFFFF",
+      "accent": "#002FA7",
+      "score": {
+        "poor": "#DC2626",
+        "average": "#D97706",
+        "good": "#16A34A"
+      }
+    },
+    "forbidden": [
+      "#7351B7",
+      "#1B93A4"
+    ],
+    "rules": [
+      "Use monochrome 95% of the time. Colors are reserved for functional signals (scores, active states).",
+      "Never use teal green or teal blue (#1B93A4) for dashboards."
+    ]
+  },
+  "grids": {
+    "dashboard_grid": {
+      "type": "High Density Bento Grid",
+      "classes": "grid grid-cols-1 md:grid-cols-4 lg:grid-cols-12 gap-6",
+      "widgets": {
+        "main_score": "col-span-full md:col-span-2 lg:col-span-3 row-span-2",
+        "dimension_cards": "col-span-1 lg:col-span-3",
+        "recommendations": "col-span-full md:col-span-2 lg:col-span-4 row-span-4",
+        "history_chart": "col-span-full lg:col-span-8"
+      }
+    }
+  },
+  "layouts": {
+    "surfaces": {
+      "cards": "bg-white border border-border/40 hover:-translate-y-1 transition-transform duration-200 ease-out hover:shadow-lg rounded-none sm:rounded-lg",
+      "header": "sticky top-0 z-50 backdrop-blur-xl bg-white/70 border-b border-border/40 backdrop-saturate-150"
+    },
+    "spacing": "Use p-6 or p-8 inside cards to prevent text collision and provide generous breathing room."
+  },
+  "components": {
+    "libraries": [
+      "shadcn/ui (Tables, Tabs, Accordions, Progress, Dialogs, Select, Forms)",
+      "@phosphor-icons/react (for all icons due to dense data nature)",
+      "recharts (for score history charts over time)",
+      "sonner (for toast notifications)"
+    ],
+    "customization": {
+      "cards": "Remove excessive padding for dense data sections, but maintain minimum p-4. Use flat rectangular aesthetics over highly rounded.",
+      "buttons": "Sharp corners or subtle rounded-md, stark black for primary. Always explicitly set hover states (hover:bg-gray-800 hover:text-white).",
+      "forms": "Left aligned labels, clear visible borders."
+    }
+  },
+  "visual enhancers": {
+    "empty_states": "Do not leave blank. Show 'Enter a URL to analyze' with abstract minimal graphical cues.",
+    "charts": "Use simple area charts for History. Use monotone primary color for lines to avoid rainbow effect.",
+    "json_ld_viewer": "Use dark mode retro-futurist block (Terminal look) for the code snippet to contrast against the light UI.",
+    "textures": "Add subtle noise texture to the background in dark mode or hero sections if applicable."
+  },
+  "motion": {
+    "rules": [
+      "Micro-animations on hover (subtle lift `-translate-y-1` and `shadow-lg`).",
+      "Accordion and Tabs must use smooth height/fade transitions.",
+      "Score gauge should animate from 0 to actual score on mount using framer-motion or simple CSS transitions."
+    ]
+  },
+  "accessibility": {
+    "contrast": "Ensure text meets APCA/WCAG AA standards. Black on white, or white on black.",
+    "focus_states": "focus:ring-2 focus:ring-accent focus:outline-none focus:ring-offset-2",
+    "motion": "Respect prefers-reduced-motion media query."
+  },
+  "media": {
+    "image_urls": {
+      "auth_hero": {
+        "url": "https://images.unsplash.com/photo-1454117096348-e4abbeba002c?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2Njd8MHwxfHNlYXJjaHwxfHxtaW5pbWFsJTIwYWJzdHJhY3QlMjBnZW9tZXRyaWMlMjB3aGl0ZXxlbnwwfHx8fDE3ODYzMDQyMzJ8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Black and white abstract geometric wall, perfect for the split-pane login screen side panel.",
+        "category": "backgrounds"
+      }
+    }
+  },
+  "3d libraries and steps": {
+    "libraries": [],
+    "instruction": "Do not use 3D libraries (Three.js/R3F) for this specific data-heavy dashboard, as it distracts from the quantitative metrics. Stick to 2D charting with Recharts."
+  },
+  "instructions_to_main_agent": [
+    "Use .js files (JSX) instead of .tsx as per the project requirements.",
+    "Integrate Shadcn UI components but adjust the rounded corners to be more 'sharp' (max rounded-md) and borders to be 1px solid.",
+    "Ensure the JSON-LD viewer has a 'Copy to Clipboard' button and a 'Download .json' button.",
+    "Implement the 'Overall Score Gauge' as a prominent SVG circular progress or a bold typography block.",
+    "The 8 dimensions (Answer clarity, Structure, etc.) should be displayed as a dense grid of mini-cards with horizontal progress bars.",
+    "The 'History & Comparison Dashboard' should use 'recharts' to plot URL scores over time.",
+    "All interactive elements MUST have a data-testid attribute in kebab-case format.",
+    "Do NOT use HTML <select> or <input type='date'>. Always use Shadcn.",
+    "Do NOT center align the app container. Keep text-alignment natural (left).",
+    "Add transition: transform 0.2s ease, box-shadow 0.2s ease to interactive elements. Do NOT use transition-all.",
+    "Add 'sonner' for toast notifications on actions like 'JSON Copied'."
+  ],
+  "UNIVERSAL GUIDELINES FOR MAIN AGENT": [
+    "Don't make generic centered layouts, simplistic gradients, and uniform styling.",
+    "Create depth through layered design elements with z-index hierarchy.",
+    "Use glass-morphism effects with backdrop filters (12-24px blur) for sticky headers.",
+    "You MUST NOT apply universal transition. Eg: transition: all.",
+    "You MUST NOT center align the app container, ie do not add .App { text-align: center; }.",
+    "Always use modern button styles like pill-shaped or sharp button with interaction animations.",
+    "NEVER use AI assistant Emoji characters like 🤖🧠💭💡🔮🎯 etc for icons.",
+    "Every interaction needs micro-animations - hover states, transitions, parallax effects, and entrance animations.",
+    "Use 2-3x more spacing than feels comfortable."
+  ],
+  "GENERAL UI UX DESIGN GUIDELINES": [
+    "All interactive and key informational elements MUST include a data-testid attribute to facilitate robust automated testing.",
+    "DO NOT use complete transparent background in header, overlays, any surface that has content under it.",
+    "Mobile-First layout rules must be enforced using Tailwind prefixes correctly.",
+    "Grid Layout items MUST be direct children of grid containers.",
+    "Generous spacing: Use padding like p-6 or p-8 inside cards to avoid edge collisions."
+  ]
+}
