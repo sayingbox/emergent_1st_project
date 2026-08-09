@@ -402,6 +402,198 @@ Provide 8-12 questions, ranked by relevance desc, mostly ones NOT covered by the
     return {"gaps": gap_list}
 
 
+# ---------------- GEO Platform: Domain / Visibility / Citations / Reddit ----------------
+class DomainInput(BaseModel):
+    domain: str
+
+
+class VisibilityInput(BaseModel):
+    brand: str
+    domain: Optional[str] = None
+    prompts: List[str]
+
+
+class CitationInput(BaseModel):
+    query: str
+    domain: Optional[str] = None
+
+
+class RedditInput(BaseModel):
+    topic: str
+
+
+@api_router.post("/domain/analyze")
+async def domain_analyze(body: DomainInput, user: dict = Depends(get_current_user)):
+    domain = body.domain.strip().replace("https://", "").replace("http://", "").strip("/")
+    if not domain:
+        raise HTTPException(status_code=400, detail="Domain is required")
+    system = """You are a GEO/AEO (Generative & Answer Engine Optimization) domain auditor. You estimate how well a website is positioned to be surfaced and cited by AI engines (ChatGPT, Perplexity, Google AI Overviews, Gemini). Respond with ONLY valid minified JSON."""
+    prompt = f"""Assess the domain "{domain}" for AI search readiness based on your knowledge of this site/brand.
+
+Return JSON:
+{{
+ "domain": "{domain}",
+ "brand_summary": "1-2 sentence description of what this domain/brand is",
+ "ai_readiness_score": <0-100>,
+ "authority_score": <0-100>,
+ "content_score": <0-100>,
+ "technical_score": <0-100>,
+ "known_by_ai": <bool, does a generative engine likely know this brand>,
+ "categories": [{{"label":"Brand Authority","score":<0-100>,"note":"..."}},{{"label":"Content Depth","score":<0-100>,"note":"..."}},{{"label":"Structured Data","score":<0-100>,"note":"..."}},{{"label":"Citation Worthiness","score":<0-100>,"note":"..."}},{{"label":"Topical Coverage","score":<0-100>,"note":"..."}}],
+ "top_topics": ["topics this domain is authoritative on"],
+ "quick_wins": [{{"priority":"high|medium|low","action":"specific action to improve AI visibility"}}],
+ "competitors": ["likely competitor domains competing for the same AI answers"]
+}}
+Provide 4-6 quick_wins. Be realistic; if unknown brand, reflect low authority."""
+    res = await llm_json(system, prompt, f"domain-{user['id']}")
+    doc = {"id": secrets.token_hex(12), "user_id": user["id"], "domain": domain,
+           "created_at": datetime.now(timezone.utc).isoformat(), **res}
+    await db.domains.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.get("/domain")
+async def domain_list(user: dict = Depends(get_current_user)):
+    docs = await db.domains.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return docs
+
+
+@api_router.post("/visibility")
+async def visibility(body: VisibilityInput, user: dict = Depends(get_current_user)):
+    prompts = [p.strip() for p in body.prompts if p.strip()][:12]
+    if not body.brand.strip() or not prompts:
+        raise HTTPException(status_code=400, detail="Brand and at least one prompt are required")
+    system = """You simulate how leading generative AI engines respond to user prompts, and whether a given brand is mentioned or recommended in those answers. Base this on your knowledge of the brand's real-world prominence. Respond with ONLY valid minified JSON."""
+    prompt = f"""BRAND: {body.brand}{(' (' + body.domain + ')') if body.domain else ''}
+For EACH of the following prompts, predict whether the brand would appear in AI answers across engines (ChatGPT, Perplexity, Google AI Overview, Gemini).
+
+PROMPTS:
+{json.dumps(prompts)}
+
+Return JSON:
+{{
+ "brand": "{body.brand}",
+ "visibility_score": <0-100 overall across all prompts/engines>,
+ "share_of_voice": <0-100 estimated vs competitors>,
+ "results": [
+   {{"prompt":"...","mentioned":<bool>,"position":"none|passing|recommended|top","sentiment":"positive|neutral|negative","engines":{{"chatgpt":<bool>,"perplexity":<bool>,"google_ai":<bool>,"gemini":<bool>}},"competitors_mentioned":["..."],"note":"why"}}
+ ],
+ "recommendations": ["how to increase AI visibility"]
+}}
+One result object per prompt, same order."""
+    res = await llm_json(system, prompt, f"vis-{user['id']}")
+    doc = {"id": secrets.token_hex(12), "user_id": user["id"], "brand": body.brand, "domain": body.domain,
+           "created_at": datetime.now(timezone.utc).isoformat(), **res}
+    await db.visibility.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.get("/visibility")
+async def visibility_list(user: dict = Depends(get_current_user)):
+    docs = await db.visibility.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return docs
+
+
+@api_router.post("/citations")
+async def citations(body: CitationInput, user: dict = Depends(get_current_user)):
+    if not body.query.strip():
+        raise HTTPException(status_code=400, detail="Query is required")
+    system = """You predict which web sources a generative AI engine would most likely cite when answering a query, based on your knowledge of authoritative sources for the topic. Respond with ONLY valid minified JSON."""
+    dom = body.domain.strip() if body.domain else None
+    prompt = f"""QUERY: "{body.query}"
+{f'USER DOMAIN TO CHECK: {dom}' if dom else ''}
+
+Return JSON:
+{{
+ "query": "{body.query}",
+ "user_domain": {json.dumps(dom)},
+ "user_domain_cited": <bool or null>,
+ "user_domain_rank": <int or null, position among cited sources>,
+ "sources": [{{"domain":"example.com","title":"likely page/source","type":"official|editorial|community|reference|competitor","authority":<0-100>,"likelihood":<0-100>,"why":"why AI would cite it"}}],
+ "recommendation": "how the user could earn a citation for this query"
+}}
+Provide 8-12 sources ranked by likelihood desc. If user_domain is provided, set user_domain_cited/rank accordingly (rank null if not cited)."""
+    res = await llm_json(system, prompt, f"cite-{user['id']}")
+    doc = {"id": secrets.token_hex(12), "user_id": user["id"], "query": body.query, "domain": dom,
+           "created_at": datetime.now(timezone.utc).isoformat(), **res}
+    await db.citations.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.get("/citations")
+async def citations_list(user: dict = Depends(get_current_user)):
+    docs = await db.citations.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return docs
+
+
+@api_router.post("/reddit")
+async def reddit(body: RedditInput, user: dict = Depends(get_current_user)):
+    if not body.topic.strip():
+        raise HTTPException(status_code=400, detail="Topic is required")
+    system = """You are a Reddit research expert. Given a topic, identify the most relevant subreddits and the kinds of high-engagement discussion threads where a brand could participate or be mentioned — since Reddit is heavily cited by generative AI engines. Respond with ONLY valid minified JSON."""
+    prompt = f"""TOPIC: "{body.topic}"
+
+Return JSON:
+{{
+ "topic": "{body.topic}",
+ "subreddits": [{{"name":"r/example","members":"approx size e.g. 1.2M","relevance":<0-100>,"why":"why relevant"}}],
+ "threads": [{{"title":"realistic representative thread title","subreddit":"r/example","angle":"the discussion angle","engagement":"high|medium|low","opportunity":"how a brand/content could add value or get mentioned"}}],
+ "content_ideas": ["Reddit-native content angles that could earn mentions and AI citations"]
+}}
+Provide 5-8 subreddits (ranked by relevance) and 6-10 threads."""
+    res = await llm_json(system, prompt, f"reddit-{user['id']}")
+    doc = {"id": secrets.token_hex(12), "user_id": user["id"], "topic": body.topic,
+           "created_at": datetime.now(timezone.utc).isoformat(), **res}
+    await db.reddit.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.get("/reddit")
+async def reddit_list(user: dict = Depends(get_current_user)):
+    docs = await db.reddit.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return docs
+
+
+@api_router.get("/dashboard")
+async def dashboard(user: dict = Depends(get_current_user)):
+    uid = user["id"]
+    analyses = await db.analyses.find({"user_id": uid}, {"_id": 0, "id": 1, "title": 1, "source_url": 1, "overall_score": 1, "created_at": 1}).sort("created_at", -1).to_list(500)
+    domains = await db.domains.find({"user_id": uid}, {"_id": 0, "id": 1, "domain": 1, "ai_readiness_score": 1, "created_at": 1}).sort("created_at", -1).to_list(200)
+    vis = await db.visibility.find({"user_id": uid}, {"_id": 0, "id": 1, "brand": 1, "visibility_score": 1, "created_at": 1}).sort("created_at", -1).to_list(200)
+    cites = await db.citations.count_documents({"user_id": uid})
+    reddits = await db.reddit.count_documents({"user_id": uid})
+
+    def avg(vals):
+        vals = [v for v in vals if isinstance(v, (int, float))]
+        return round(sum(vals) / len(vals)) if vals else 0
+
+    activity = []
+    for a in analyses[:6]:
+        activity.append({"type": "AEO Content", "label": a["title"], "score": a["overall_score"], "created_at": a["created_at"], "link": f"/app/analysis/{a['id']}"})
+    for d in domains[:4]:
+        activity.append({"type": "Domain", "label": d["domain"], "score": d.get("ai_readiness_score", 0), "created_at": d["created_at"], "link": "/app/domain"})
+    for v in vis[:4]:
+        activity.append({"type": "Visibility", "label": v["brand"], "score": v.get("visibility_score", 0), "created_at": v["created_at"], "link": "/app/visibility"})
+    activity.sort(key=lambda x: x["created_at"], reverse=True)
+
+    return {
+        "stats": {
+            "analyses": len(analyses), "domains": len(domains), "visibility_runs": len(vis),
+            "citation_runs": cites, "reddit_runs": reddits,
+            "avg_content_score": avg([a["overall_score"] for a in analyses]),
+            "avg_domain_score": avg([d.get("ai_readiness_score") for d in domains]),
+            "avg_visibility": avg([v.get("visibility_score") for v in vis]),
+        },
+        "content_trend": [{"date": a["created_at"], "score": a["overall_score"], "label": a["title"]} for a in list(reversed(analyses))[-12:]],
+        "visibility_trend": [{"date": v["created_at"], "score": v.get("visibility_score", 0), "label": v["brand"]} for v in list(reversed(vis))[-12:]],
+        "activity": activity[:10],
+    }
+
+
 app.include_router(api_router)
 
 app.add_middleware(

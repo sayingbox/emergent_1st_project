@@ -61,7 +61,7 @@ export default function AnalysisDetail() {
 
   return (
     <div className="space-y-8">
-      <Link to="/app" className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-black" data-testid="back-link"><ArrowLeft size={16} /> Back</Link>
+      <Link to="/app/optimizer" className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-black" data-testid="back-link"><ArrowLeft size={16} /> Back</Link>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Score + meta */}

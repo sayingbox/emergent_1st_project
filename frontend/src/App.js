@@ -3,7 +3,12 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { Layout } from "@/components/Layout";
 import Auth from "@/pages/Auth";
-import Dashboard from "@/pages/Dashboard";
+import Overview from "@/pages/Overview";
+import DomainAnalysis from "@/pages/DomainAnalysis";
+import Visibility from "@/pages/Visibility";
+import Citations from "@/pages/Citations";
+import Reddit from "@/pages/Reddit";
+import Optimizer from "@/pages/Dashboard";
 import AnalysisDetail from "@/pages/AnalysisDetail";
 import History from "@/pages/History";
 import { Toaster } from "@/components/ui/sonner";
@@ -30,7 +35,12 @@ function App() {
         <BrowserRouter>
           <Routes>
             <Route path="/login" element={<LoginRoute />} />
-            <Route path="/app" element={<Protected><Dashboard /></Protected>} />
+            <Route path="/app" element={<Protected><Overview /></Protected>} />
+            <Route path="/app/domain" element={<Protected><DomainAnalysis /></Protected>} />
+            <Route path="/app/visibility" element={<Protected><Visibility /></Protected>} />
+            <Route path="/app/citations" element={<Protected><Citations /></Protected>} />
+            <Route path="/app/reddit" element={<Protected><Reddit /></Protected>} />
+            <Route path="/app/optimizer" element={<Protected><Optimizer /></Protected>} />
             <Route path="/app/history" element={<Protected><History /></Protected>} />
             <Route path="/app/analysis/:id" element={<Protected><AnalysisDetail /></Protected>} />
             <Route path="*" element={<Navigate to="/app" replace />} />

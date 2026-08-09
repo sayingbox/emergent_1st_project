@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Card } from "@/components/ui/card";
 import { scoreColor } from "@/components/ScoreGauge";
-import { Link2, FileText, Sparkles, Trash2, ArrowUpRight, Loader2 } from "lucide-react";
+import { Link2, FileText, Sparkles, Trash2, ArrowUpRight, Loader2, History } from "lucide-react";
 import { toast } from "sonner";
 
 const scoreLabel = (s) => (s >= 75 ? "Strong" : s >= 50 ? "Needs work" : "Poor");
@@ -48,10 +48,16 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-10">
-      <div>
-        <p className="text-xs tracking-[0.2em] uppercase font-bold text-[#002FA7]">Generative Engine Optimization</p>
-        <h1 className="font-head text-4xl sm:text-5xl font-extrabold tracking-tight mt-2">Score your content for AI answers</h1>
-        <p className="text-muted-foreground mt-3 max-w-2xl">Paste a URL or raw content. We audit clarity, structure, E-E-A-T, schema and question coverage — then tell you exactly how to get cited.</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="text-xs tracking-[0.2em] uppercase font-bold text-[#002FA7]">Answer Engine (AEO)</p>
+          <h1 className="font-head text-4xl sm:text-5xl font-extrabold tracking-tight mt-2">Content Optimizer</h1>
+          <p className="text-muted-foreground mt-3 max-w-2xl">Paste a URL or raw content. We audit clarity, structure, E-E-A-T, schema and question coverage — then tell you exactly how to get cited.</p>
+        </div>
+        <Link to="/app/history" data-testid="view-history-link"
+          className="hidden sm:inline-flex items-center gap-2 text-sm font-medium px-4 py-2 rounded-md border border-border hover:bg-muted transition-colors shrink-0">
+          <History size={16} /> History
+        </Link>
       </div>
 
       <Card className="p-6 sm:p-8 rounded-lg border-border/60">
