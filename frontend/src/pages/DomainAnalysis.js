@@ -6,10 +6,12 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader, EmptyState } from "@/components/ui-bits";
 import { ScoreGauge, scoreColor } from "@/components/ScoreGauge";
-import { Globe, Loader2, Sparkles, Zap, Users } from "lucide-react";
+import { Globe, Loader2, Sparkles, Zap, Users, Link2, Search, ExternalLink, BarChart3 } from "lucide-react";
 import { toast } from "sonner";
 
 const priColor = { high: "bg-red-100 text-red-700 border-red-200", medium: "bg-amber-100 text-amber-700 border-amber-200", low: "bg-gray-100 text-gray-600 border-gray-200" };
+const posColor = { top: "bg-green-100 text-green-700 border-green-200", recommended: "bg-green-100 text-green-700 border-green-200", passing: "bg-amber-100 text-amber-700 border-amber-200" };
+const engLabel = { chatgpt: "ChatGPT", perplexity: "Perplexity", google_ai: "Google AI", gemini: "Gemini" };
 
 function Bar({ score, label, note }) {
   return (
@@ -17,6 +19,18 @@ function Bar({ score, label, note }) {
       <div className="flex justify-between text-sm mb-1"><span className="font-medium">{label}</span><span className="font-head font-bold" style={{ color: scoreColor(score) }}>{score}</span></div>
       <div className="h-2 bg-muted rounded-full overflow-hidden"><div className="h-full rounded-full" style={{ width: `${score}%`, background: scoreColor(score) }} /></div>
       {note && <p className="text-xs text-muted-foreground mt-1">{note}</p>}
+    </div>
+  );
+}
+
+function Metric({ label, value, colored }) {
+  const numeric = typeof value === "number";
+  return (
+    <div className="rounded-lg border border-border/60 p-3">
+      <div className="text-[10px] uppercase tracking-wide font-bold text-muted-foreground">{label}</div>
+      <div className="font-head text-2xl font-extrabold mt-0.5" style={colored && numeric ? { color: scoreColor(value) } : {}}>
+        {value ?? "—"}{colored && numeric ? "" : ""}
+      </div>
     </div>
   );
 }
@@ -41,7 +55,7 @@ export default function DomainAnalysis() {
   const r = result;
   return (
     <div>
-      <PageHeader overline="Overview" title="Domain Analysis" subtitle="Enter a domain to get an AI-readiness report — authority, content depth, citation-worthiness and quick wins." />
+      <PageHeader overline="Overview" title="Domain Analysis" subtitle="Enter a domain for a full AI-search report — Domain Authority & SEO metrics, the citation sources AI pulls the brand from, the prompts it ranks for, relevant topics, and quick wins." />
 
       <Card className="p-6 rounded-xl border-border/60 mb-8">
         <div className="flex gap-2">
@@ -67,12 +81,78 @@ export default function DomainAnalysis() {
             </Badge>
           </Card>
 
+          {/* Metrics */}
           <Card className="lg:col-span-8 p-6 rounded-xl border-border/60">
-            <h3 className="font-head font-bold mb-4">Breakdown</h3>
-            <div className="space-y-4">{(r.categories || []).map((c, i) => <Bar key={i} {...c} />)}</div>
+            <h3 className="font-head font-bold mb-4 flex items-center gap-2"><BarChart3 size={18} className="text-[#002FA7]" /> SEO & authority metrics</h3>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+              <Metric label="Domain Authority" value={r.metrics?.domain_authority} colored />
+              <Metric label="Page Authority" value={r.metrics?.page_authority} colored />
+              <Metric label="Trust Score" value={r.metrics?.trust_score} colored />
+              <Metric label="Backlinks" value={r.metrics?.estimated_backlinks} />
+              <Metric label="Referring Domains" value={r.metrics?.referring_domains} />
+              <Metric label="Est. Monthly Traffic" value={r.metrics?.estimated_monthly_traffic} />
+            </div>
+            <div className="mt-6 space-y-4">{(r.categories || []).map((c, i) => <Bar key={i} {...c} />)}</div>
           </Card>
 
+          {/* Citation sources */}
           <Card className="lg:col-span-7 p-6 rounded-xl border-border/60">
+            <h3 className="font-head font-bold mb-1 flex items-center gap-2"><Link2 size={18} className="text-[#002FA7]" /> AI citation sources</h3>
+            <p className="text-xs text-muted-foreground mb-4">Where generative engines pull their knowledge of this brand.</p>
+            <div className="space-y-2" data-testid="citation-sources">
+              {(r.citation_sources || []).map((c, i) => (
+                <div key={i} className="flex items-start gap-3 p-3 rounded-lg border border-border/60">
+                  <span className="font-head font-bold text-muted-foreground w-5 text-center shrink-0">{i + 1}</span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-sm truncate">{c.source}</span>
+                      <Badge variant="secondary" className="rounded-md capitalize text-[10px]">{c.type}</Badge>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-0.5">{c.why}</p>
+                    {c.url && <a href={c.url.startsWith("http") ? c.url : `https://${c.url}`} target="_blank" rel="noreferrer" className="text-xs text-[#002FA7] inline-flex items-center gap-1 mt-1 hover:underline break-all">{c.url} <ExternalLink size={11} /></a>}
+                  </div>
+                  <span className="font-head font-bold text-sm shrink-0" style={{ color: scoreColor(c.authority) }}>{c.authority}</span>
+                </div>
+              ))}
+              {(!r.citation_sources || r.citation_sources.length === 0) && <p className="text-sm text-muted-foreground">No notable citation sources detected — this brand has little third-party coverage AI can draw on.</p>}
+            </div>
+          </Card>
+
+          {/* Ranking prompts */}
+          <Card className="lg:col-span-5 p-6 rounded-xl border-border/60">
+            <h3 className="font-head font-bold mb-1 flex items-center gap-2"><Search size={18} className="text-[#002FA7]" /> Ranking prompts</h3>
+            <p className="text-xs text-muted-foreground mb-4">Queries this domain surfaces for in AI answers.</p>
+            <div className="space-y-2" data-testid="ranking-prompts">
+              {(r.ranking_prompts || []).map((p, i) => (
+                <div key={i} className="p-3 rounded-lg bg-muted/40">
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="text-sm font-medium">{p.prompt}</span>
+                    <Badge className={`rounded-md border capitalize shrink-0 text-[10px] ${posColor[p.position] || priColor.low}`}>{p.position}</Badge>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                    <Badge variant="outline" className="rounded-md text-[10px] capitalize">{p.intent}</Badge>
+                    {(p.engines || []).map((e) => <span key={e} className="text-[10px] px-1.5 py-0.5 rounded bg-white border border-border/60 text-muted-foreground">{engLabel[e] || e}</span>)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          {/* Top topics */}
+          <Card className="lg:col-span-7 p-6 rounded-xl border-border/60">
+            <h3 className="font-head font-bold mb-4">Top relevant topics</h3>
+            <div className="space-y-3" data-testid="top-topics">
+              {(r.top_topics || []).map((t, i) => (
+                <div key={i}>
+                  <div className="flex justify-between text-sm mb-1"><span className="font-medium">{t.topic}</span><span className="text-xs text-muted-foreground">auth {t.authority} · rel {t.relevance}</span></div>
+                  <div className="h-1.5 bg-muted rounded-full overflow-hidden"><div className="h-full rounded-full" style={{ width: `${t.authority}%`, background: scoreColor(t.authority) }} /></div>
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          {/* Quick wins */}
+          <Card className="lg:col-span-5 p-6 rounded-xl border-border/60">
             <h3 className="font-head font-bold mb-4 flex items-center gap-2"><Zap size={18} className="text-[#002FA7]" /> Quick wins</h3>
             <div className="space-y-2">
               {(r.quick_wins || []).map((q, i) => (
@@ -84,10 +164,9 @@ export default function DomainAnalysis() {
             </div>
           </Card>
 
-          <Card className="lg:col-span-5 p-6 rounded-xl border-border/60">
-            <h3 className="font-head font-bold mb-3">Top topics</h3>
-            <div className="flex flex-wrap gap-2 mb-5">{(r.top_topics || []).map((t, i) => <Badge key={i} variant="secondary" className="rounded-md">{t}</Badge>)}</div>
-            <h3 className="font-head font-bold mb-3 flex items-center gap-2"><Users size={16} /> Competitors</h3>
+          {/* Competitors */}
+          <Card className="lg:col-span-12 p-6 rounded-xl border-border/60">
+            <h3 className="font-head font-bold mb-3 flex items-center gap-2"><Users size={16} /> Competitors for the same AI answers</h3>
             <div className="flex flex-wrap gap-2">{(r.competitors || []).map((t, i) => <Badge key={i} variant="outline" className="rounded-md">{t}</Badge>)}</div>
           </Card>
         </div>

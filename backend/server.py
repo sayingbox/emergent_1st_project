@@ -427,24 +427,35 @@ async def domain_analyze(body: DomainInput, user: dict = Depends(get_current_use
     domain = body.domain.strip().replace("https://", "").replace("http://", "").strip("/")
     if not domain:
         raise HTTPException(status_code=400, detail="Domain is required")
-    system = """You are a GEO/AEO (Generative & Answer Engine Optimization) domain auditor. You estimate how well a website is positioned to be surfaced and cited by AI engines (ChatGPT, Perplexity, Google AI Overviews, Gemini). Respond with ONLY valid minified JSON."""
-    prompt = f"""Assess the domain "{domain}" for AI search readiness based on your knowledge of this site/brand.
+    system = """You are a GEO/AEO (Generative & Answer Engine Optimization) domain auditor and SEO metrics estimator. You estimate how well a website is positioned to be surfaced and cited by AI engines (ChatGPT, Perplexity, Google AI Overviews, Gemini), and you provide realistic SEO metrics and the real sources AI engines pull brand knowledge from. Respond with ONLY valid minified JSON."""
+    prompt = f"""Produce a DETAILED AI-search intelligence report for the domain "{domain}" based on your knowledge of this site/brand. Be realistic: for unknown or small brands use low metrics and empty/sparse citation sources.
 
 Return JSON:
 {{
  "domain": "{domain}",
  "brand_summary": "1-2 sentence description of what this domain/brand is",
  "ai_readiness_score": <0-100>,
- "authority_score": <0-100>,
- "content_score": <0-100>,
- "technical_score": <0-100>,
  "known_by_ai": <bool, does a generative engine likely know this brand>,
+ "metrics": {{
+   "domain_authority": <0-100 Moz-style DA estimate>,
+   "page_authority": <0-100 estimate for homepage>,
+   "estimated_backlinks": "human string e.g. '48K'",
+   "referring_domains": "human string e.g. '3.1K'",
+   "estimated_monthly_traffic": "human string e.g. '2.4M'",
+   "trust_score": <0-100>
+ }},
  "categories": [{{"label":"Brand Authority","score":<0-100>,"note":"..."}},{{"label":"Content Depth","score":<0-100>,"note":"..."}},{{"label":"Structured Data","score":<0-100>,"note":"..."}},{{"label":"Citation Worthiness","score":<0-100>,"note":"..."}},{{"label":"Topical Coverage","score":<0-100>,"note":"..."}}],
- "top_topics": ["topics this domain is authoritative on"],
+ "citation_sources": [{{"source":"the site/publication name AI pulls brand info from e.g. Wikipedia, G2, TechCrunch","url":"most likely specific URL","type":"encyclopedia|review|news|directory|social|official|forum","authority":<0-100>,"why":"what info AI extracts about the brand from here"}}],
+ "ranking_prompts": [{{"prompt":"an actual query/prompt this domain surfaces for in AI answers","position":"top|recommended|passing","engines":["chatgpt","perplexity","google_ai","gemini"],"intent":"informational|commercial|navigational|comparison"}}],
+ "top_topics": [{{"topic":"a topic this domain is GENUINELY authoritative on (must be relevant to the brand)","authority":<0-100>,"relevance":<0-100>}}],
  "quick_wins": [{{"priority":"high|medium|low","action":"specific action to improve AI visibility"}}],
  "competitors": ["likely competitor domains competing for the same AI answers"]
 }}
-Provide 4-6 quick_wins. Be realistic; if unknown brand, reflect low authority."""
+Requirements:
+- citation_sources: 5-10 REAL, well-known sources that AI engines actually use to learn about this brand (only include ones that plausibly exist for this brand; fewer if the brand is obscure).
+- ranking_prompts: 6-10 realistic prompts the domain plausibly appears in, ranked most prominent first.
+- top_topics: 5-8 topics, ONLY ones truly relevant to this brand, sorted by authority desc.
+- quick_wins: 4-6 actions."""
     res = await llm_json(system, prompt, f"domain-{user['id']}")
     doc = {"id": secrets.token_hex(12), "user_id": user["id"], "domain": domain,
            "created_at": datetime.now(timezone.utc).isoformat(), **res}
