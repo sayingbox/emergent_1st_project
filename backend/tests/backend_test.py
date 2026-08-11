@@ -5,6 +5,7 @@ and the existing content optimizer endpoints. Uses cookie-based auth via
 `requests.Session`.
 """
 import os
+import re
 import time
 import uuid
 import pytest
@@ -50,6 +51,61 @@ class TestAuth:
     def test_me_unauthenticated(self):
         r = requests.get(f"{API}/auth/me", timeout=15)
         assert r.status_code == 401
+
+
+# ---------- Remember-me cookie behavior (iteration 2) ----------
+def _cookie_maxage(set_cookie_headers, name):
+    """Return int Max-Age of the given cookie name from a list of Set-Cookie headers."""
+    for h in set_cookie_headers:
+        if h.startswith(f"{name}="):
+            m = re.search(r"[Mm]ax-[Aa]ge=(\d+)", h)
+            if m:
+                return int(m.group(1))
+    return None
+
+
+class TestRememberMe:
+    def test_remember_true_15_day_cookie(self):
+        s = requests.Session()
+        r = s.post(f"{API}/auth/login",
+                   json={"email": TEST_EMAIL, "password": TEST_PW, "remember": True},
+                   timeout=15)
+        assert r.status_code == 200, r.text
+        # requests exposes multi-Set-Cookie via r.raw.headers (case-insensitive multimap)
+        set_cookies = r.raw.headers.getlist("Set-Cookie") if hasattr(r.raw.headers, "getlist") else r.headers.get("Set-Cookie", "").split(",")
+        access_max = _cookie_maxage(set_cookies, "access_token")
+        refresh_max = _cookie_maxage(set_cookies, "refresh_token")
+        assert access_max == 15 * 86400, f"expected 1296000, got {access_max} (headers: {set_cookies})"
+        assert refresh_max == 15 * 86400, f"expected 1296000, got {refresh_max}"
+        # Land on /app: verify user object is returned
+        assert r.json()["email"] == TEST_EMAIL
+        # /api/auth/me still works with the session cookies
+        me = s.get(f"{API}/auth/me", timeout=15)
+        assert me.status_code == 200
+        assert me.json()["email"] == TEST_EMAIL
+
+    def test_remember_false_short_cookie(self):
+        s = requests.Session()
+        r = s.post(f"{API}/auth/login",
+                   json={"email": TEST_EMAIL, "password": TEST_PW, "remember": False},
+                   timeout=15)
+        assert r.status_code == 200, r.text
+        set_cookies = r.raw.headers.getlist("Set-Cookie") if hasattr(r.raw.headers, "getlist") else r.headers.get("Set-Cookie", "").split(",")
+        access_max = _cookie_maxage(set_cookies, "access_token")
+        refresh_max = _cookie_maxage(set_cookies, "refresh_token")
+        assert access_max == 900, f"expected 900, got {access_max}"
+        assert refresh_max == 7 * 86400, f"expected 604800, got {refresh_max}"
+
+    def test_remember_default_omitted_short_cookie(self):
+        # Backward-compat: if remember flag omitted, treat as False -> short session
+        s = requests.Session()
+        r = s.post(f"{API}/auth/login",
+                   json={"email": TEST_EMAIL, "password": TEST_PW},
+                   timeout=15)
+        assert r.status_code == 200
+        set_cookies = r.raw.headers.getlist("Set-Cookie") if hasattr(r.raw.headers, "getlist") else r.headers.get("Set-Cookie", "").split(",")
+        access_max = _cookie_maxage(set_cookies, "access_token")
+        assert access_max == 900
 
 
 # ---------- Dashboard ----------
@@ -176,3 +232,51 @@ class TestOptimizer:
         rl = auth_session.get(f"{API}/analyses", timeout=15)
         assert rl.status_code == 200
         assert any(a["id"] == aid for a in rl.json())
+
+
+# ---------- URL analysis + JS scraper fallback (iteration 2) ----------
+# The full URL analysis takes 30-70s (Chromium render + LLM). The preview ingress
+# cuts around 60s. We drive this test through the in-cluster backend
+# (http://localhost:8001) so the request completes end-to-end. This still exercises
+# the same real code path a user hits.
+LOCAL_API = "http://localhost:8001/api"
+
+
+class TestUrlAnalysis:
+    def test_url_analysis_js_heavy_page(self):
+        s = requests.Session()
+        r = s.post(f"{LOCAL_API}/auth/login",
+                   json={"email": TEST_EMAIL, "password": TEST_PW}, timeout=15)
+        assert r.status_code == 200, r.text
+        # requests may not persist Secure cookies on http://localhost; extract token
+        # from Set-Cookie and use Authorization header (backend supports both).
+        access = None
+        cookies = r.raw.headers.getlist("Set-Cookie") if hasattr(r.raw.headers, "getlist") else []
+        for h in cookies:
+            m = re.match(r"access_token=([^;]+)", h)
+            if m:
+                access = m.group(1)
+                break
+        assert access, f"could not extract access_token from cookies: {cookies}"
+        s.headers.update({"Authorization": f"Bearer {access}"})
+
+        r = s.post(
+            f"{LOCAL_API}/analyses",
+            json={"input_type": "url", "content": "https://quotes.toscrape.com/js/",
+                  "target_query": "famous quotes"},
+            timeout=150,
+        )
+        assert r.status_code == 200, f"status={r.status_code} body={r.text[:400]}"
+        d = r.json()
+        for k in ("id", "title", "word_count", "dimensions", "overall_score"):
+            assert k in d, f"missing {k}"
+        # JS-rendered content -> word_count must be well above static (~17 words)
+        assert isinstance(d["word_count"], int)
+        assert d["word_count"] >= 100, f"word_count too low, static-only fetch suspected: {d['word_count']}"
+        assert isinstance(d["overall_score"], int) and 0 <= d["overall_score"] <= 100
+        assert isinstance(d["dimensions"], list) and len(d["dimensions"]) >= 5
+        # persistence via GET
+        aid = d["id"]
+        r2 = s.get(f"{LOCAL_API}/analyses/{aid}", timeout=15)
+        assert r2.status_code == 200
+        assert r2.json()["source_url"] == "https://quotes.toscrape.com/js/"

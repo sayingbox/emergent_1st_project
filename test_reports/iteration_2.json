@@ -1,0 +1,55 @@
+{
+  "summary": "Iteration 2 (Remember-Me, DomainAnalysis View More toggles, JS-heavy scraper) tested end-to-end. Backend 15/15 pytest passing (100%): remember=true issues 1,296,000s cookies, remember=false/omitted issues 900s cookies. Full URL analysis on quotes.toscrape.com/js/ returned overall_score=28, word_count=249 (vs static ~17 -> Chromium fallback confirmed), 8 dimensions, real LLM answer citing Einstein/Marilyn Monroe/Eleanor Roosevelt. Frontend: remember-me-checkbox on Auth page produces browser cookies expiring in ~1295999s when checked and ~899s when unchecked; landing on /app in both. Domain Analysis on stripe.com renders 5 citation sources initially with toggle-citations 'View 5 more' -> expands to 10 -> 'Show less' -> collapses back to 5; same for toggle-prompts (5 -> 10). No regressions in prior AI endpoints (domain/visibility/citations/reddit/optimizer text).",
+  "ai_feature_verdicts": [
+    "remember_me_login - pass - evidence: POST /api/auth/login {remember:true} -> Set-Cookie access_token Max-Age=1296000 (15d); {remember:false} -> Max-Age=900; browser context.cookies expires_in ~1295999s vs ~899s; /app reached in both",
+    "domain_view_more_toggles - pass - evidence: stripe.com POST /api/domain/analyze -> 200 with 10 citation_sources and 10 ranking_prompts; UI initial rows=5,5; toggle-citations 'View 5 more' -> rows=10 -> 'Show less' -> rows=5; toggle-prompts 'View 5 more' -> rows=10",
+    "url_scraper_js_fallback - pass - evidence: POST /api/analyses input_type=url content=https://quotes.toscrape.com/js/ -> 200 in ~56s via localhost; word_count=249 (static-only would be ~17), overall_score=28, 8 dimensions, summary_answer names Einstein/J.K. Rowling/Marilyn Monroe (real JS-rendered text). Test in /app/backend/tests/backend_test.py::TestUrlAnalysis",
+    "content_optimizer_text - pass - evidence: POST /api/analyses text RAG article -> 200, overall_score int, dimensions>=5 (regression test still passing)",
+    "domain_analyze - pass - regression: notion.so -> 200, ai_readiness_score int 0-100, categories>=3, quick_wins>=1",
+    "visibility_scan - pass - regression: Notion + 2 prompts -> 200, all 4 engines present per result",
+    "citations_predict - pass - regression: best crm hubspot.com -> 200, sources>=3, user_domain='hubspot.com'",
+    "reddit_finder - pass - regression: 'project management software' -> 200, subreddits>=3, threads>=3"
+  ],
+  "skills_loaded": ["ai-testing-core", "ai-testing-llm"],
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/analyses (input_type=url, JS-heavy)", "issue": "Full request takes 40-70s. Behind the preview ingress (~60s cutoff) some JS-heavy URLs return 502 Bad gateway even though the analysis completes server-side. In-cluster (localhost:8001) it works. Consider (a) rendering the page async and returning a job id, or (b) tightening the Chromium networkidle wait, or (c) capping page.wait_for_timeout(1200) if word_count already >= threshold. Not a bug per se, but a user-visible risk for slow domains."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Dashboard / Overview", "issues": ["Existing recharts ResponsiveContainer width(-1)/height(-1) warning on first render before data (already reported in iteration_1). Non-blocking."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "(Optional, not new) URL analysis on JS-heavy pages can exceed 60s on the public preview -> returns 502 through Cloudflare ingress even though backend finished. Consider making /api/analyses (input_type=url) async (return job id + poll) or shorten Chromium wait_until to 'domcontentloaded' + a shorter fixed wait when body text already crosses 250 words.",
+    "(Optional, from iter_1) minHeight on chart containers to silence recharts width(-1) warnings."
+  ],
+  "critical_code_review_comments": [
+    "server.py grew to 709 lines - now at the 700-line split threshold. Recommend splitting into routers/auth.py, routers/optimizer.py, routers/geo.py, services/{llm,scraper}.py.",
+    "fetch_html() always tries Chromium render when static_words < 250. For short pages that are truly static-thin (e.g. an already-scraped microblog), this pays a 15-30s Chromium cold-start needlessly. Consider skipping render when the static HTML shows no <script src=> tags or has content-type text/plain.",
+    "render_html() uses wait_until='networkidle' + wait_for_timeout(1200). networkidle can hang for 30s on ad-tracker sites. Move to wait_until='domcontentloaded' and inspect word_count in-page, then bail early when >= threshold to keep the ingress under 60s.",
+    "REMEMBER_DAYS is a module-level constant (15). set_auth_cookies() correctly uses it. Access token TTL when remember=True is 15 days (long-lived JWT). This is a deliberate product choice but does mean a stolen access_token stays valid up to 15 days - worth flagging: rotate JWT_SECRET only invalidates them by discarding the refresh; consider a token version/jti allowlist for logout invalidation.",
+    "Cookies use SameSite=None; Secure; Partitioned - correct for the cross-site preview domain. httpOnly is set on both access + refresh - good.",
+    "Frontend DomainAnalysis.js: showAllCites/showAllPrompts state resets to false on new analysis AND on selecting a past report - good UX.",
+    "toggle button text uses (r.citation_sources.length - 5) directly. If citation_sources is exactly 5, the button hides (correct). If undefined it defaults to [] (correct).",
+    "server.py logout() only deletes cookies; if the frontend never calls logout (e.g. crashed tab), the 15-day access_token stays live. Acceptable for MVP but recorded."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test.py (added TestRememberMe class with 3 tests + TestUrlAnalysis JS-heavy scraper test; added re import)"
+  ],
+  "success_rate": {"backend": "100% (15/15)", "frontend": "100% (2/2 new UI flows: remember-me + view-more toggles)"},
+  "test_credentials": "tester1@geo.com / pass123 (from /app/memory/test_credentials.md) - verified working",
+  "seed_data_creation": "Additional test data on tester1@geo.com from this run: 1 stripe.com domain report, 1 quotes.toscrape.com/js/ URL analysis, 3 remember-me login cookies. Safe to leave.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Backend URL analysis on JS-heavy pages takes ~55s server-side; run it from http://localhost:8001 (Authorization: Bearer <token from Set-Cookie>) to bypass the ~60s preview ingress cutoff. Cookies with Secure; SameSite=None are NOT persisted by requests.Session on http://localhost - always extract access_token and pass as Bearer for localhost testing. Remember-me tests read Max-Age from response.raw.headers.getlist('Set-Cookie'). Toggle tests count children of [data-testid=citation-sources] and [data-testid=ranking-prompts]. pytest runs -n 2 loadscope in ~3 min for full suite.",
+  "rca of the issue": "N/A - all iteration 2 features working. Only note: preview ingress ~60s cutoff makes UI-driven JS-heavy URL analysis a 502 risk; backend itself is correct."
+}

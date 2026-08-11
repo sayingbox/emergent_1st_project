@@ -34,6 +34,10 @@ db = client[os.environ['DB_NAME']]
 JWT_ALGORITHM = "HS256"
 EMERGENT_LLM_KEY = os.environ['EMERGENT_LLM_KEY']
 
+# Ensure Playwright can locate the pre-installed Chromium in this environment
+os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "/pw-browsers")
+PW_EXECUTABLE = os.environ.get("PLAYWRIGHT_CHROME_EXECUTABLE_PATH")
+
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
 
@@ -51,19 +55,24 @@ def get_jwt_secret() -> str:
     return os.environ["JWT_SECRET"]
 
 
-def create_access_token(user_id: str, email: str) -> str:
-    payload = {"sub": user_id, "email": email, "exp": datetime.now(timezone.utc) + timedelta(minutes=15), "type": "access"}
+def create_access_token(user_id: str, email: str, minutes: int = 15) -> str:
+    payload = {"sub": user_id, "email": email, "exp": datetime.now(timezone.utc) + timedelta(minutes=minutes), "type": "access"}
     return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
 
-def create_refresh_token(user_id: str) -> str:
-    payload = {"sub": user_id, "exp": datetime.now(timezone.utc) + timedelta(days=7), "type": "refresh"}
+def create_refresh_token(user_id: str, days: int = 7) -> str:
+    payload = {"sub": user_id, "exp": datetime.now(timezone.utc) + timedelta(days=days), "type": "refresh"}
     return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
 
-def set_auth_cookies(response: Response, access: str, refresh: str):
-    response.set_cookie("access_token", access, httponly=True, secure=True, samesite="none", max_age=900, path="/")
-    response.set_cookie("refresh_token", refresh, httponly=True, secure=True, samesite="none", max_age=604800, path="/")
+REMEMBER_DAYS = 15
+
+
+def set_auth_cookies(response: Response, access: str, refresh: str, remember: bool = False):
+    access_max = REMEMBER_DAYS * 86400 if remember else 900
+    refresh_max = REMEMBER_DAYS * 86400 if remember else 604800
+    response.set_cookie("access_token", access, httponly=True, secure=True, samesite="none", max_age=access_max, path="/")
+    response.set_cookie("refresh_token", refresh, httponly=True, secure=True, samesite="none", max_age=refresh_max, path="/")
 
 
 async def get_current_user(request: Request) -> dict:
@@ -101,6 +110,7 @@ class RegisterInput(BaseModel):
 class LoginInput(BaseModel):
     email: EmailStr
     password: str
+    remember: bool = False
 
 
 class AnalyzeInput(BaseModel):
@@ -114,18 +124,75 @@ class SimulateInput(BaseModel):
 
 
 # ---------------- Content ingestion ----------------
+UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+
+
+def _visible_word_count(html: str) -> int:
+    try:
+        soup = BeautifulSoup(html, "lxml")
+        for t in soup(["script", "style", "noscript"]):
+            t.decompose()
+        return len(soup.get_text(" ", strip=True).split())
+    except Exception:
+        return 0
+
+
+async def render_html(url: str) -> str:
+    """Render a JS-heavy page with headless Chromium."""
+    from playwright.async_api import async_playwright
+    async with async_playwright() as p:
+        launch_kwargs = {"args": ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]}
+        if PW_EXECUTABLE and os.path.exists(PW_EXECUTABLE):
+            launch_kwargs["executable_path"] = PW_EXECUTABLE
+        browser = await p.chromium.launch(**launch_kwargs)
+        try:
+            page = await browser.new_page(user_agent=UA)
+            await page.goto(url, wait_until="domcontentloaded", timeout=25000)
+            await page.wait_for_timeout(1500)
+            return await page.content()
+        finally:
+            await browser.close()
+
+
+async def fetch_html(url: str) -> str:
+    """Fetch a URL; fall back to a headless browser for JS-heavy / thin pages."""
+    static_html = ""
+    try:
+        r = requests.get(url, headers={"User-Agent": UA}, timeout=15)
+        r.raise_for_status()
+        static_html = r.text
+    except Exception as e:
+        logger.warning(f"static fetch failed for {url}: {e}")
+
+    static_words = _visible_word_count(static_html) if static_html else 0
+    if static_words >= 250:
+        return static_html
+
+    # Thin / client-rendered page -> render with Chromium
+    try:
+        rendered = await render_html(url)
+        if rendered and _visible_word_count(rendered) > static_words:
+            logger.info(f"rendered {url} via Chromium ({_visible_word_count(rendered)} words vs {static_words} static)")
+            return rendered
+    except Exception as e:
+        logger.warning(f"render fallback failed for {url}: {e}")
+
+    if static_html:
+        return static_html
+    raise RuntimeError("Could not fetch page content")
+
+
 def fetch_url(url: str) -> str:
-    headers = {"User-Agent": "Mozilla/5.0 (compatible; GEOBot/1.0)"}
-    r = requests.get(url, headers=headers, timeout=15)
+    r = requests.get(url, headers={"User-Agent": UA}, timeout=15)
     r.raise_for_status()
     return r.text
 
 
-def normalize_content(input_type: str, content: str) -> dict:
+def normalize_content(input_type: str, content: str, prefetched_html: str = None) -> dict:
     url = None
     if input_type == "url":
         url = content.strip()
-        html = fetch_url(url)
+        html = prefetched_html if prefetched_html is not None else fetch_url(url)
     else:
         html = content
     looks_html = "<" in html and ">" in html
@@ -270,7 +337,9 @@ async def login(body: LoginInput, response: Response):
     if not user or not verify_password(body.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     uid = str(user["_id"])
-    set_auth_cookies(response, create_access_token(uid, email), create_refresh_token(uid))
+    minutes = REMEMBER_DAYS * 1440 if body.remember else 15
+    days = REMEMBER_DAYS if body.remember else 7
+    set_auth_cookies(response, create_access_token(uid, email, minutes=minutes), create_refresh_token(uid, days=days), remember=body.remember)
     return {"id": uid, "email": email, "name": user.get("name", "User"), "role": user.get("role", "user")}
 
 
@@ -298,7 +367,11 @@ async def create_analysis(body: AnalyzeInput, user: dict = Depends(get_current_u
     if not body.content.strip():
         raise HTTPException(status_code=400, detail="Content is required")
     try:
-        norm = normalize_content(body.input_type, body.content)
+        if body.input_type == "url":
+            html = await fetch_html(body.content.strip())
+            norm = normalize_content("url", body.content.strip(), prefetched_html=html)
+        else:
+            norm = normalize_content(body.input_type, body.content)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Could not fetch/parse content: {e}")
 

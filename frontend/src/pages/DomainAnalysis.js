@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader, EmptyState } from "@/components/ui-bits";
 import { ScoreGauge, scoreColor } from "@/components/ScoreGauge";
-import { Globe, Loader2, Sparkles, Zap, Users, Link2, Search, ExternalLink, BarChart3 } from "lucide-react";
+import { Globe, Loader2, Sparkles, Zap, Users, Link2, Search, ExternalLink, BarChart3, ChevronDown, ChevronUp } from "lucide-react";
 import { toast } from "sonner";
 
 const priColor = { high: "bg-red-100 text-red-700 border-red-200", medium: "bg-amber-100 text-amber-700 border-amber-200", low: "bg-gray-100 text-gray-600 border-gray-200" };
@@ -40,6 +40,8 @@ export default function DomainAnalysis() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [past, setPast] = useState([]);
+  const [showAllCites, setShowAllCites] = useState(false);
+  const [showAllPrompts, setShowAllPrompts] = useState(false);
 
   const load = () => http.get("/domain").then((r) => setPast(r.data)).catch(() => {});
   useEffect(() => { load(); }, []);
@@ -47,7 +49,7 @@ export default function DomainAnalysis() {
   const run = async () => {
     if (!domain.trim()) { toast.error("Enter a domain"); return; }
     setLoading(true);
-    try { const { data } = await http.post("/domain/analyze", { domain }); setResult(data); load(); toast.success("Domain analyzed"); }
+    try { const { data } = await http.post("/domain/analyze", { domain }); setResult(data); setShowAllCites(false); setShowAllPrompts(false); load(); toast.success("Domain analyzed"); }
     catch (e) { toast.error(formatApiErrorDetail(e.response?.data?.detail)); }
     finally { setLoading(false); }
   };
@@ -100,7 +102,7 @@ export default function DomainAnalysis() {
             <h3 className="font-head font-bold mb-1 flex items-center gap-2"><Link2 size={18} className="text-[#002FA7]" /> AI citation sources</h3>
             <p className="text-xs text-muted-foreground mb-4">Where generative engines pull their knowledge of this brand.</p>
             <div className="space-y-2" data-testid="citation-sources">
-              {(r.citation_sources || []).map((c, i) => (
+              {(showAllCites ? (r.citation_sources || []) : (r.citation_sources || []).slice(0, 5)).map((c, i) => (
                 <div key={i} className="flex items-start gap-3 p-3 rounded-lg border border-border/60">
                   <span className="font-head font-bold text-muted-foreground w-5 text-center shrink-0">{i + 1}</span>
                   <div className="flex-1 min-w-0">
@@ -116,6 +118,12 @@ export default function DomainAnalysis() {
               ))}
               {(!r.citation_sources || r.citation_sources.length === 0) && <p className="text-sm text-muted-foreground">No notable citation sources detected — this brand has little third-party coverage AI can draw on.</p>}
             </div>
+            {(r.citation_sources || []).length > 5 && (
+              <button onClick={() => setShowAllCites((v) => !v)} data-testid="toggle-citations"
+                className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-[#002FA7] hover:underline">
+                {showAllCites ? <>Show less <ChevronUp size={15} /></> : <>View {(r.citation_sources.length - 5)} more <ChevronDown size={15} /></>}
+              </button>
+            )}
           </Card>
 
           {/* Ranking prompts */}
@@ -123,7 +131,7 @@ export default function DomainAnalysis() {
             <h3 className="font-head font-bold mb-1 flex items-center gap-2"><Search size={18} className="text-[#002FA7]" /> Ranking prompts</h3>
             <p className="text-xs text-muted-foreground mb-4">Queries this domain surfaces for in AI answers.</p>
             <div className="space-y-2" data-testid="ranking-prompts">
-              {(r.ranking_prompts || []).map((p, i) => (
+              {(showAllPrompts ? (r.ranking_prompts || []) : (r.ranking_prompts || []).slice(0, 5)).map((p, i) => (
                 <div key={i} className="p-3 rounded-lg bg-muted/40">
                   <div className="flex items-start justify-between gap-2">
                     <span className="text-sm font-medium">{p.prompt}</span>
@@ -136,6 +144,12 @@ export default function DomainAnalysis() {
                 </div>
               ))}
             </div>
+            {(r.ranking_prompts || []).length > 5 && (
+              <button onClick={() => setShowAllPrompts((v) => !v)} data-testid="toggle-prompts"
+                className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-[#002FA7] hover:underline">
+                {showAllPrompts ? <>Show less <ChevronUp size={15} /></> : <>View {(r.ranking_prompts.length - 5)} more <ChevronDown size={15} /></>}
+              </button>
+            )}
           </Card>
 
           {/* Top topics */}
@@ -176,7 +190,7 @@ export default function DomainAnalysis() {
       {past.length === 0 ? <EmptyState icon={Globe} text="No domain reports yet." /> : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {past.map((p) => (
-            <button key={p.id} onClick={() => { setResult(p); window.scrollTo({ top: 0, behavior: "smooth" }); }} data-testid={`domain-past-${p.id}`}
+            <button key={p.id} onClick={() => { setResult(p); setShowAllCites(false); setShowAllPrompts(false); window.scrollTo({ top: 0, behavior: "smooth" }); }} data-testid={`domain-past-${p.id}`}
               className="text-left bg-white border border-border/60 rounded-xl p-5 transition-transform duration-200 hover:-translate-y-1 hover:shadow-lg">
               <div className="flex items-center justify-between">
                 <span className="font-head font-bold truncate">{p.domain}</span>

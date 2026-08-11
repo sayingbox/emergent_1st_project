@@ -4,6 +4,7 @@ import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Gauge } from "lucide-react";
 import { toast } from "sonner";
 
@@ -12,6 +13,7 @@ export default function Auth() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [remember, setRemember] = useState(false);
   const [loading, setLoading] = useState(false);
   const { login, register } = useAuth();
   const navigate = useNavigate();
@@ -19,7 +21,7 @@ export default function Auth() {
   const submit = async (e) => {
     e.preventDefault();
     setLoading(true);
-    const res = mode === "login" ? await login(email, password) : await register(name, email, password);
+    const res = mode === "login" ? await login(email, password, remember) : await register(name, email, password);
     setLoading(false);
     if (res.ok) { toast.success(mode === "login" ? "Welcome back" : "Account created"); navigate("/app"); }
     else toast.error(res.error);
@@ -61,6 +63,12 @@ export default function Auth() {
               <Label className="mb-1.5 block">Password</Label>
               <Input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" data-testid="password-input" />
             </div>
+            {mode === "login" && (
+              <label className="flex items-center gap-2 cursor-pointer select-none" data-testid="remember-me-label">
+                <Checkbox checked={remember} onCheckedChange={(v) => setRemember(!!v)} data-testid="remember-me-checkbox" />
+                <span className="text-sm text-muted-foreground">Keep me signed in for 15 days</span>
+              </label>
+            )}
             <Button type="submit" disabled={loading} className="w-full bg-black text-white hover:bg-gray-800" data-testid="auth-submit">
               {loading ? "Please wait…" : mode === "login" ? "Sign in" : "Create account"}
             </Button>
