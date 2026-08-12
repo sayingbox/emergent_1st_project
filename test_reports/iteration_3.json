@@ -1,0 +1,61 @@
+{
+  "summary": "Iteration 3 (Superadmin entitlement, Domain Analysis async job, 50+ citation sources & ranking prompts, topic-filtered prompts) verified end-to-end. 18/19 backend tests pass (1 pre-existing environment regression in JS scraper). All new features work. Superadmin kiskobiswal@gmail.com returns role='admin'+full_access=true on login/me; normal user tester1@geo.com returns full_access=false. POST /api/domain/analyze on figma.com returned in <0.5s with {id, status:'processing'}; polling GET /api/domain/{id} completed in ~75s with 55 citation_sources, 64 ranking_prompts, 12 top_topics; 0 off-topic prompts. UI: entering vercel.com shows the 'Building your deep AI-search report' loading card, then after ~87s renders domain-result with 5 initial citations/prompts and toggle-citations/toggle-prompts expanding to 53/60 (both >=50) and collapsing back to 5. Regressions (auth, dashboard, visibility, citations, reddit, content optimizer text, remember-me cookies) all still pass.",
+  "ai_feature_verdicts": [
+    "superadmin_entitlement - pass - evidence: POST /api/auth/login {email:'kiskobiswal@gmail.com',password:'super123'} -> 200 {role:'admin',full_access:true}; GET /api/auth/me -> {role:'admin',full_access:true}. Contrast tester1@geo.com login -> {role:'user',full_access:false}; /api/auth/me same. Verified both via pytest and via browser fetch on preview URL.",
+    "domain_analyze_async - pass - evidence: POST /api/domain/analyze {domain:'figma.com'} returned in 0.3s with {id, status:'processing'}. Polling GET /api/domain/{id} at 4s intervals reached status='done' at ~75s. domain list (GET /api/domain) includes the completed job and excludes processing jobs.",
+    "domain_report_depth - pass - evidence: figma.com report -> 55 citation_sources, 64 ranking_prompts, 12 top_topics (measured via /api/domain listing). notion.so 53/64/12. Vercel.com (fresh UI-driven run) 53/60/12. All >=50.",
+    "domain_prompts_topic_filter - pass - evidence: For figma.com run, every ranking_prompt.topic matched a top_topics entry (case-insensitive substring); off_topic count = 0/64. _filter_prompts_to_topics enforced server-side.",
+    "domain_ui_loading_and_toggle - pass - evidence: UI entering 'vercel.com' showed data-testid=domain-loading with copy 'Building your deep AI-search report… Scanning 50+ citation sources and ranking prompts.' domain-result rendered after 87.1s. Initial rows = 5/5. toggle-citations text 'View 48 more' -> expanded to 55 rows -> 'Show less' -> collapsed to 5. toggle-prompts text 'View 55 more' -> expanded to 55 rows -> collapsed to 5.",
+    "regression_remember_me - pass - evidence: pytest TestRememberMe all 3 tests pass (Max-Age=1296000 with remember=true; Max-Age=900 with remember=false/omitted).",
+    "regression_auth - pass - evidence: TestAuth 3/3 (login OK, wrong pw 401, unauth me 401).",
+    "regression_dashboard - pass - evidence: /api/dashboard returns full shape.",
+    "regression_visibility - pass - evidence: Notion + 2 prompts -> 200, all 4 engines present.",
+    "regression_citations - pass - evidence: query 'best crm for startups' domain='hubspot.com' -> sources>=3, user_domain='hubspot.com'.",
+    "regression_reddit - pass - evidence: 'project management software' -> subreddits>=3, threads>=3.",
+    "regression_content_optimizer_text - pass - evidence: RAG article via POST /api/analyses text -> 200, dimensions>=5, persisted via GET.",
+    "url_scraper_js_fallback - fail (environment regression) - evidence: POST /api/analyses url https://quotes.toscrape.com/js/ returned word_count=7 (static-only), backend logs show 'render fallback failed ... Executable doesn't exist at /pw-browsers/chromium_headless_shell-1234/chrome-linux/headless_shell'. Actual installed browser is chromium_headless_shell-1208; PLAYWRIGHT_CHROME_EXECUTABLE_PATH is not visible to the supervisor-run backend so os.environ.get returns None and Playwright uses its (mismatched) default. Not in iteration 3 scope but recorded."
+  ],
+  "skills_loaded": ["ai-testing-core", "ai-testing-llm"],
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/analyses (input_type=url, JS-heavy)", "issue": "Playwright package upgraded to expect chromium build 1234 but the container has 1208 at /pw-browsers/chromium_headless_shell-1208. server.py reads PLAYWRIGHT_CHROME_EXECUTABLE_PATH via os.environ.get() at import time, but supervisor's backend process does not inherit PLAYWRIGHT_CHROME_EXECUTABLE_PATH=/usr/local/bin/browser-use-chromium from the shell env. Result: render_html() launches Playwright without executable_path override -> BrowserType.launch fails -> normalize_content falls back to static-only HTML (word_count 7 for quotes.toscrape.com/js/). Fix: either (a) add PLAYWRIGHT_CHROME_EXECUTABLE_PATH=/usr/local/bin/browser-use-chromium to /app/backend/.env, or (b) hardcode the path fallback in render_html when PW_EXECUTABLE is empty, or (c) rerun playwright install chromium to match version 1234."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_iter3_full.xml",
+    "/app/test_reports/pytest/pytest_iter3_a.xml",
+    "/app/test_reports/pytest/pytest_iter3_async.xml",
+    "/app/test_reports/pytest/pytest_iter3_regression.xml"
+  ],
+  "action_items": [
+    "Fix Playwright/browser version mismatch: add PLAYWRIGHT_CHROME_EXECUTABLE_PATH=/usr/local/bin/browser-use-chromium to /app/backend/.env (persistent across supervisor restarts), OR run `playwright install chromium` to install the 1234 build the current package expects. Currently JS-heavy URL analysis silently degrades to static-only fetch. This regressed since iteration 2 (which had it passing with word_count=249)."
+  ],
+  "critical_code_review_comments": [
+    "server.py: apply_entitlements() implementation is clean and applied in all 3 auth exit points (register, login, get_current_user). Good pattern.",
+    "server.py _run_domain_analysis: catches all exceptions and stores status='error'+error message on the job doc. domain_get returns 404 only when doc is truly missing, so the UI can distinguish error vs processing vs done. Good.",
+    "domain_analyze creates the job doc THEN spawns asyncio.create_task(...). If the request is cancelled after insert but before create_task (extremely narrow), no worker runs and the job stays 'processing' forever. Consider a heartbeat/timeout sweeper or refuse to accept new jobs older than N minutes still marked processing.",
+    "_filter_prompts_to_topics uses `pt == t or pt in t or t in pt` — this is generous (substring both directions). Works for the current use case but could accept a very short/generic topic string as matching almost anything. Consider tightening to `pt in t or t == pt` (subset only).",
+    "llm_json now accepts max_tokens; domain uses 8000. Anthropic Claude Sonnet 4-6 supports this but be aware max_tokens=8000 with a ~50-item structured response can occasionally truncate JSON — the JSON regex salvage at line 283 catches most, but a hard truncation mid-value still 502s. Iteration 3 empirically OK.",
+    "server.py has grown to 764 lines. Same recommendation as iteration 2: split into routers/*.py + services/*.py for maintainability.",
+    "DomainAnalysis.js polling uses setInterval every 3s. Consider adding an upper-bound (e.g. stop after 3 min) and displaying a 'still working…' hint after 60s. Right now if a job hangs it polls forever.",
+    "DomainAnalysis.js pollRef cleanup on unmount is present. Also clears when new run() is invoked. Good.",
+    "SUPERADMIN_EMAILS is a Python set literal at module scope — safe/immutable per import. If future need arises to add more, consider environment-driven list."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test.py (added TestSuperadminEntitlement with 2 tests + TestDomainAsyncJob with 2 tests; updated existing TestDomain to reflect new async POST contract)"
+  ],
+  "success_rate": {"backend": "94.7% (18/19). Sole failure is a pre-existing environment regression in the JS scraper unrelated to iteration 3 features.", "frontend": "100% (3/3: domain-loading card, domain-result render, toggle-citations/prompts expand/collapse)"},
+  "test_credentials": "tester1@geo.com/pass123, admin@geo.com/admin123, kiskobiswal@gmail.com/super123 (all working). /app/memory/test_credentials.md does NOT list the superadmin — recommend adding it.",
+  "seed_data_creation": "Additional tester1@geo.com data from this run: 2 figma.com domain reports (55 citations/64 prompts each), 1 stripe.com and 1 notion.so async job, 1 vercel.com UI-driven analysis. Safe to leave.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "New iteration 3 tests live in /app/backend/tests/backend_test.py: TestSuperadminEntitlement (2 tests), TestDomainAsyncJob (2 tests). The heavy async test polls up to 180s and typically completes in 75-90s. Run only the async class alone (`pytest tests/backend_test.py::TestDomainAsyncJob -v`) if you need speed; the full suite takes ~2.5 min. Superadmin login already works via preview URL — no need to register. UI toggle testing does NOT need a fresh analysis: use one of the many existing 'domain-past-<id>' cards which loads a completed report instantly. Ranking prompt topic filter tolerates case-insensitive substring both directions; be permissive when writing new assertions.",
+  "rca of the issue": "url_scraper_js_fallback failure RCA: (1) In iteration 2, environment had Playwright package version matching the chromium_headless_shell-1208 build present in /pw-browsers. (2) Between iter2 and iter3, Playwright package was updated -> now looks for chromium_headless_shell-1234. (3) server.py has a workaround: `PW_EXECUTABLE = os.environ.get('PLAYWRIGHT_CHROME_EXECUTABLE_PATH')`, and `/usr/local/bin/browser-use-chromium` symlinks to the installed 1208 build. (4) BUT supervisor does not inherit that env var from the login shell; it's only set for interactive users. Backend imports server.py under supervisor -> PW_EXECUTABLE=None -> Playwright launches its default which points at the missing 1234 build -> fallback fails silently. Mitigation: add `PLAYWRIGHT_CHROME_EXECUTABLE_PATH=/usr/local/bin/browser-use-chromium` to /app/backend/.env and restart backend."
+}

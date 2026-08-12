@@ -7,6 +7,7 @@ load_dotenv(ROOT_DIR / '.env')
 import os
 import re
 import json
+import asyncio
 import logging
 import secrets
 from datetime import datetime, timezone, timedelta
@@ -37,6 +38,19 @@ EMERGENT_LLM_KEY = os.environ['EMERGENT_LLM_KEY']
 # Ensure Playwright can locate the pre-installed Chromium in this environment
 os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "/pw-browsers")
 PW_EXECUTABLE = os.environ.get("PLAYWRIGHT_CHROME_EXECUTABLE_PATH")
+
+# Hardcoded superadmins: always full access regardless of any plan/feature restrictions
+SUPERADMIN_EMAILS = {"kiskobiswal@gmail.com"}
+
+
+def apply_entitlements(user: dict) -> dict:
+    email = (user.get("email") or "").lower()
+    if email in SUPERADMIN_EMAILS:
+        user["role"] = "admin"
+        user["full_access"] = True
+    else:
+        user["full_access"] = user.get("role") == "admin"
+    return user
 
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
@@ -93,7 +107,7 @@ async def get_current_user(request: Request) -> dict:
         user["id"] = str(user["_id"])
         user.pop("_id", None)
         user.pop("password_hash", None)
-        return user
+        return apply_entitlements(user)
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
     except jwt.InvalidTokenError:
@@ -140,10 +154,13 @@ def _visible_word_count(html: str) -> int:
 async def render_html(url: str) -> str:
     """Render a JS-heavy page with headless Chromium."""
     from playwright.async_api import async_playwright
+    exec_path = PW_EXECUTABLE if (PW_EXECUTABLE and os.path.exists(PW_EXECUTABLE)) else None
+    if not exec_path and os.path.exists("/usr/local/bin/browser-use-chromium"):
+        exec_path = "/usr/local/bin/browser-use-chromium"
     async with async_playwright() as p:
         launch_kwargs = {"args": ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]}
-        if PW_EXECUTABLE and os.path.exists(PW_EXECUTABLE):
-            launch_kwargs["executable_path"] = PW_EXECUTABLE
+        if exec_path:
+            launch_kwargs["executable_path"] = exec_path
         browser = await p.chromium.launch(**launch_kwargs)
         try:
             page = await browser.new_page(user_agent=UA)
@@ -259,8 +276,8 @@ def strip_json(text: str) -> str:
     return text.strip()
 
 
-async def llm_json(system: str, prompt: str, session: str) -> dict:
-    chat = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=session, system_message=system).with_model("anthropic", "claude-sonnet-4-6")
+async def llm_json(system: str, prompt: str, session: str, max_tokens: int = 4096) -> dict:
+    chat = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=session, system_message=system).with_model("anthropic", "claude-sonnet-4-6").with_params(max_tokens=max_tokens)
     resp = await chat.send_message(UserMessage(text=prompt))
     raw = strip_json(resp if isinstance(resp, str) else str(resp))
     try:
@@ -327,7 +344,7 @@ async def register(body: RegisterInput, response: Response):
     res = await db.users.insert_one(doc)
     uid = str(res.inserted_id)
     set_auth_cookies(response, create_access_token(uid, email), create_refresh_token(uid))
-    return {"id": uid, "email": email, "name": body.name, "role": "user"}
+    return apply_entitlements({"id": uid, "email": email, "name": body.name, "role": "user"})
 
 
 @api_router.post("/auth/login")
@@ -340,7 +357,7 @@ async def login(body: LoginInput, response: Response):
     minutes = REMEMBER_DAYS * 1440 if body.remember else 15
     days = REMEMBER_DAYS if body.remember else 7
     set_auth_cookies(response, create_access_token(uid, email, minutes=minutes), create_refresh_token(uid, days=days), remember=body.remember)
-    return {"id": uid, "email": email, "name": user.get("name", "User"), "role": user.get("role", "user")}
+    return apply_entitlements({"id": uid, "email": email, "name": user.get("name", "User"), "role": user.get("role", "user")})
 
 
 @api_router.post("/auth/logout")
@@ -495,13 +512,11 @@ class RedditInput(BaseModel):
     topic: str
 
 
-@api_router.post("/domain/analyze")
-async def domain_analyze(body: DomainInput, user: dict = Depends(get_current_user)):
-    domain = body.domain.strip().replace("https://", "").replace("http://", "").strip("/")
-    if not domain:
-        raise HTTPException(status_code=400, detail="Domain is required")
-    system = """You are a GEO/AEO (Generative & Answer Engine Optimization) domain auditor and SEO metrics estimator. You estimate how well a website is positioned to be surfaced and cited by AI engines (ChatGPT, Perplexity, Google AI Overviews, Gemini), and you provide realistic SEO metrics and the real sources AI engines pull brand knowledge from. Respond with ONLY valid minified JSON."""
-    prompt = f"""Produce a DETAILED AI-search intelligence report for the domain "{domain}" based on your knowledge of this site/brand. Be realistic: for unknown or small brands use low metrics and empty/sparse citation sources.
+DOMAIN_SYSTEM = """You are a GEO/AEO (Generative & Answer Engine Optimization) domain auditor and SEO metrics estimator. You estimate how well a website is positioned to be surfaced and cited by AI engines (ChatGPT, Perplexity, Google AI Overviews, Gemini), and you provide realistic SEO metrics and the real sources AI engines pull brand knowledge from. Respond with ONLY valid minified JSON."""
+
+
+def domain_prompt(domain: str) -> str:
+    return f"""Produce a DETAILED AI-search intelligence report for the domain "{domain}" based on your knowledge of this site/brand. Be realistic: for unknown or small brands use low metrics and empty/sparse citation sources.
 
 Return JSON:
 {{
@@ -518,29 +533,72 @@ Return JSON:
    "trust_score": <0-100>
  }},
  "categories": [{{"label":"Brand Authority","score":<0-100>,"note":"..."}},{{"label":"Content Depth","score":<0-100>,"note":"..."}},{{"label":"Structured Data","score":<0-100>,"note":"..."}},{{"label":"Citation Worthiness","score":<0-100>,"note":"..."}},{{"label":"Topical Coverage","score":<0-100>,"note":"..."}}],
- "citation_sources": [{{"source":"the site/publication name AI pulls brand info from e.g. Wikipedia, G2, TechCrunch","url":"most likely specific URL","type":"encyclopedia|review|news|directory|social|official|forum","authority":<0-100>,"why":"what info AI extracts about the brand from here"}}],
- "ranking_prompts": [{{"prompt":"an actual query/prompt this domain surfaces for in AI answers","position":"top|recommended|passing","engines":["chatgpt","perplexity","google_ai","gemini"],"intent":"informational|commercial|navigational|comparison"}}],
  "top_topics": [{{"topic":"a topic this domain is GENUINELY authoritative on (must be relevant to the brand)","authority":<0-100>,"relevance":<0-100>}}],
+ "citation_sources": [{{"source":"the site/publication name AI pulls brand info from e.g. Wikipedia, G2, TechCrunch","url":"most likely specific URL","type":"encyclopedia|review|news|directory|social|official|forum","authority":<0-100>,"why":"short note (<=12 words) on what AI extracts here"}}],
+ "ranking_prompts": [{{"prompt":"an actual query/prompt this domain surfaces for in AI answers","topic":"MUST exactly match one of the top_topics entries","position":"top|recommended|passing","engines":["chatgpt","perplexity","google_ai","gemini"],"intent":"informational|commercial|navigational|comparison"}}],
  "quick_wins": [{{"priority":"high|medium|low","action":"specific action to improve AI visibility"}}],
  "competitors": ["likely competitor domains competing for the same AI answers"]
 }}
 Requirements:
-- citation_sources: 5-10 REAL, well-known sources that AI engines actually use to learn about this brand (only include ones that plausibly exist for this brand; fewer if the brand is obscure).
-- ranking_prompts: 6-10 realistic prompts the domain plausibly appears in, ranked most prominent first.
-- top_topics: 5-8 topics, ONLY ones truly relevant to this brand, sorted by authority desc.
-- quick_wins: 4-6 actions."""
-    res = await llm_json(system, prompt, f"domain-{user['id']}")
-    doc = {"id": secrets.token_hex(12), "user_id": user["id"], "domain": domain,
-           "created_at": datetime.now(timezone.utc).isoformat(), **res}
+- FIRST determine top_topics (8-12 topics, ONLY ones truly relevant to this brand, sorted by authority desc).
+- citation_sources: provide AT LEAST 50 sources (aim 50) that AI engines could use to learn about this brand — mix official pages, encyclopedias, reviews, news, directories, social, forums, docs, and reputable third-party mentions. Rank by authority desc. Keep "why" concise. For obscure brands, still reach ~50 by including plausible directory/aggregator/social/profile sources.
+- ranking_prompts: provide AT LEAST 50 prompts. EVERY prompt MUST be strictly derived from and relevant to one of the top_topics, and its "topic" field MUST exactly equal one of the top_topics strings. DO NOT include generic or off-topic prompts. Spread prompts across all top_topics. Rank most prominent first.
+- quick_wins: 4-6 actions.
+- Output MUST be valid minified JSON only."""
+
+
+def _filter_prompts_to_topics(res: dict) -> dict:
+    topics_l = [t.get("topic", "").lower() for t in res.get("top_topics", []) if isinstance(t, dict) and t.get("topic")]
+
+    def matches(rp):
+        pt = (rp.get("topic") or "").lower().strip()
+        return bool(pt) and any(pt == t or pt in t or t in pt for t in topics_l)
+
+    if topics_l and isinstance(res.get("ranking_prompts"), list):
+        filtered = [rp for rp in res["ranking_prompts"] if isinstance(rp, dict) and matches(rp)]
+        if filtered:
+            res["ranking_prompts"] = filtered
+    return res
+
+
+async def _run_domain_analysis(job_id: str, user_id: str, domain: str):
+    try:
+        res = await llm_json(DOMAIN_SYSTEM, domain_prompt(domain), f"domain-{user_id}", max_tokens=8000)
+        res = _filter_prompts_to_topics(res)
+        res.pop("domain", None)
+        await db.domains.update_one({"id": job_id}, {"$set": {**res, "status": "done"}})
+    except Exception as e:
+        logger.exception(f"domain analysis failed for {domain}")
+        await db.domains.update_one({"id": job_id}, {"$set": {"status": "error", "error": str(e)}})
+
+
+@api_router.post("/domain/analyze")
+async def domain_analyze(body: DomainInput, user: dict = Depends(get_current_user)):
+    domain = body.domain.strip().replace("https://", "").replace("http://", "").strip("/")
+    if not domain:
+        raise HTTPException(status_code=400, detail="Domain is required")
+    job_id = secrets.token_hex(12)
+    doc = {"id": job_id, "user_id": user["id"], "domain": domain, "status": "processing",
+           "created_at": datetime.now(timezone.utc).isoformat()}
     await db.domains.insert_one(doc)
-    doc.pop("_id", None)
-    return doc
+    asyncio.create_task(_run_domain_analysis(job_id, user["id"], domain))
+    return {"id": job_id, "domain": domain, "status": "processing"}
 
 
 @api_router.get("/domain")
 async def domain_list(user: dict = Depends(get_current_user)):
-    docs = await db.domains.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    docs = await db.domains.find({"user_id": user["id"], "status": {"$ne": "processing"}}, {"_id": 0}).sort("created_at", -1).to_list(200)
     return docs
+
+
+@api_router.get("/domain/{job_id}")
+async def domain_get(job_id: str, user: dict = Depends(get_current_user)):
+    doc = await db.domains.find_one({"id": job_id, "user_id": user["id"]}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Report not found")
+    return doc
+
+
 
 
 @api_router.post("/visibility")

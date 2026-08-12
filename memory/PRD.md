@@ -27,7 +27,15 @@ Build a tool that ingests content (URL or pasted text/markdown/HTML), scores it 
 - Full dashboard UI: analyze form, recent list, detail (gauge, dimensions, fixes, schema terminal viewer, simulator, gaps), history area charts.
 - Verified end-to-end via curl + screenshots.
 
-## Platform expansion (2026-08-09) — sidebar + GEO tools
+## Domain Analysis deep-report + platform (2026-08-12)
+- **Data depth**: domain report now returns 50+ AI citation sources and 50+ ranking prompts (llm_json max_tokens=8000).
+- **Contextual relevance**: ranking_prompts carry a `topic` field and are server-side filtered to the report's top_topics (0 off-topic).
+- **Async job**: POST /api/domain/analyze returns {id,status:'processing'} instantly; background task fills it; GET /api/domain/{id} polled by UI (loading card, 3s interval, 180s cap). Avoids the ~60s ingress timeout.
+- **Superadmin**: SUPERADMIN_EMAILS={kiskobiswal@gmail.com} → apply_entitlements() forces role=admin, full_access=true in register/login/me. Normal users full_access=false.
+- **Remember Me**: login `remember` flag → 15-day cookies vs short session.
+- **JS scraper**: /api/analyses url input renders JS-heavy pages via headless Chromium; executable path from PLAYWRIGHT_CHROME_EXECUTABLE_PATH in backend/.env (+ hardcoded /usr/local/bin/browser-use-chromium fallback). Verified 17→259 words on a JS demo page.
+- Domain UI: View More toggles (show 5 → all) for citation sources & ranking prompts.
+- Testing: iteration_3 all features pass; scraper regression fixed after report.
 - Dark sidebar layout (Overview / Generative Engine (GEO) / Answer Engine (AEO)) matching requested design.
 - **Dashboard** (GET /api/dashboard): aggregate stats, content-score trend, recent activity, tools grid.
 - **Domain Analysis** (POST /api/domain/analyze): AI-readiness score, category breakdown, quick wins, top topics, competitors; past reports.

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { http, formatApiErrorDetail } from "@/lib/api";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -42,16 +42,56 @@ export default function DomainAnalysis() {
   const [past, setPast] = useState([]);
   const [showAllCites, setShowAllCites] = useState(false);
   const [showAllPrompts, setShowAllPrompts] = useState(false);
+  const pollRef = useRef(null);
 
   const load = () => http.get("/domain").then((r) => setPast(r.data)).catch(() => {});
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    return () => { pollRef.current && clearInterval(pollRef.current); };
+  }, []);
 
   const run = async () => {
     if (!domain.trim()) { toast.error("Enter a domain"); return; }
     setLoading(true);
-    try { const { data } = await http.post("/domain/analyze", { domain }); setResult(data); setShowAllCites(false); setShowAllPrompts(false); load(); toast.success("Domain analyzed"); }
-    catch (e) { toast.error(formatApiErrorDetail(e.response?.data?.detail)); }
-    finally { setLoading(false); }
+    setResult(null);
+    setShowAllCites(false);
+    setShowAllPrompts(false);
+    try {
+      const { data } = await http.post("/domain/analyze", { domain });
+      const jobId = data.id;
+      pollRef.current && clearInterval(pollRef.current);
+      let elapsed = 0;
+      pollRef.current = setInterval(async () => {
+        elapsed += 3;
+        if (elapsed > 180) {
+          clearInterval(pollRef.current);
+          setLoading(false);
+          toast.error("Analysis is taking too long — please try again");
+          return;
+        }
+        try {
+          const { data: job } = await http.get(`/domain/${jobId}`);
+          if (job.status === "done") {
+            clearInterval(pollRef.current);
+            setResult(job);
+            setLoading(false);
+            load();
+            toast.success("Domain analyzed");
+          } else if (job.status === "error") {
+            clearInterval(pollRef.current);
+            setLoading(false);
+            toast.error("Analysis failed — please try again");
+          }
+        } catch {
+          clearInterval(pollRef.current);
+          setLoading(false);
+          toast.error("Lost connection while analyzing");
+        }
+      }, 3000);
+    } catch (e) {
+      setLoading(false);
+      toast.error(formatApiErrorDetail(e.response?.data?.detail));
+    }
   };
 
   const r = result;
@@ -71,6 +111,14 @@ export default function DomainAnalysis() {
           </Button>
         </div>
       </Card>
+
+      {loading && !r && (
+        <Card className="p-10 rounded-xl border-border/60 mb-10 flex flex-col items-center justify-center text-center grain" data-testid="domain-loading">
+          <Loader2 size={28} className="animate-spin text-[#002FA7]" />
+          <p className="font-head font-bold mt-4">Building your deep AI-search report…</p>
+          <p className="text-sm text-muted-foreground mt-1">Scanning 50+ citation sources and ranking prompts. This can take up to a minute.</p>
+        </Card>
+      )}
 
       {r && (
         <div className="grid lg:grid-cols-12 gap-6 mb-10" data-testid="domain-result">

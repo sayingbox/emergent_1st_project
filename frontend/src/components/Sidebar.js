@@ -36,7 +36,7 @@ export function Sidebar() {
       <div className="px-5 h-16 flex items-center gap-2 border-b border-white/5">
         <div className="w-8 h-8 bg-white text-black grid place-items-center rounded-md"><Gauge size={18} /></div>
         <div className="leading-tight">
-          <div className="font-head font-extrabold text-white text-base tracking-tight">GEO<span className="text-[#5b8bff]">rank</span></div>
+          <div className="font-head font-extrabold text-white text-base tracking-tight">Cite<span className="text-[#5b8bff]">tail</span></div>
           <div className="text-[10px] text-zinc-500">AI Answer Visibility</div>
         </div>
       </div>

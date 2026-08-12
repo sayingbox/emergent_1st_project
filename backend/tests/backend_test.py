@@ -123,27 +123,13 @@ class TestDashboard:
 
 # ---------- Domain analyze (LLM) ----------
 class TestDomain:
-    def test_domain_analyze_and_list(self, auth_session):
-        r = auth_session.post(f"{API}/domain/analyze", json={"domain": "notion.so"}, timeout=90)
+    def test_domain_analyze_post_is_async(self, auth_session):
+        """POST /api/domain/analyze now returns {id, status:'processing'} instantly."""
+        r = auth_session.post(f"{API}/domain/analyze", json={"domain": "notion.so"}, timeout=10)
         assert r.status_code == 200, r.text
         d = r.json()
-        # structural fields
-        for k in ["id", "domain", "ai_readiness_score", "categories", "quick_wins", "top_topics", "competitors", "brand_summary"]:
-            assert k in d, f"missing {k}"
-        assert isinstance(d["ai_readiness_score"], int)
-        assert 0 <= d["ai_readiness_score"] <= 100
-        assert isinstance(d["categories"], list) and len(d["categories"]) >= 3
-        assert isinstance(d["quick_wins"], list) and len(d["quick_wins"]) >= 1
-        # brand recognition: notion should be known
-        assert d.get("known_by_ai") in (True, False)
-        # non-empty AI content
-        assert len(d.get("brand_summary", "")) > 10
-
-        # list
-        rl = auth_session.get(f"{API}/domain", timeout=15)
-        assert rl.status_code == 200
-        arr = rl.json()
-        assert any(x["id"] == d["id"] for x in arr)
+        assert d.get("status") == "processing"
+        assert "id" in d and d.get("domain") == "notion.so"
 
     def test_domain_empty_400(self, auth_session):
         r = auth_session.post(f"{API}/domain/analyze", json={"domain": ""}, timeout=15)
@@ -232,6 +218,120 @@ class TestOptimizer:
         rl = auth_session.get(f"{API}/analyses", timeout=15)
         assert rl.status_code == 200
         assert any(a["id"] == aid for a in rl.json())
+
+
+# ---------- Iteration 3: Superadmin entitlement ----------
+SUPERADMIN_EMAIL = "kiskobiswal@gmail.com"
+SUPERADMIN_PW = "super123"
+
+
+class TestSuperadminEntitlement:
+    def test_superadmin_login_grants_admin_and_full_access(self):
+        s = requests.Session()
+        s.headers.update({"Content-Type": "application/json"})
+        r = s.post(f"{API}/auth/login",
+                   json={"email": SUPERADMIN_EMAIL, "password": SUPERADMIN_PW},
+                   timeout=15)
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d["email"] == SUPERADMIN_EMAIL
+        assert d["role"] == "admin", f"expected role admin got {d.get('role')}"
+        assert d["full_access"] is True, f"expected full_access True got {d.get('full_access')}"
+
+        # /api/auth/me also returns the same entitlements
+        me = s.get(f"{API}/auth/me", timeout=15)
+        assert me.status_code == 200
+        me_d = me.json()
+        assert me_d["email"] == SUPERADMIN_EMAIL
+        assert me_d["role"] == "admin"
+        assert me_d["full_access"] is True
+
+    def test_normal_user_has_no_full_access(self):
+        s = requests.Session()
+        s.headers.update({"Content-Type": "application/json"})
+        r = s.post(f"{API}/auth/login",
+                   json={"email": TEST_EMAIL, "password": TEST_PW},
+                   timeout=15)
+        assert r.status_code == 200
+        d = r.json()
+        assert d["role"] == "user"
+        assert d["full_access"] is False, f"normal user should not have full_access, got {d.get('full_access')}"
+        # /api/auth/me matches
+        me = s.get(f"{API}/auth/me", timeout=15)
+        assert me.status_code == 200
+        assert me.json()["full_access"] is False
+
+
+# ---------- Iteration 3: Domain async job (depth + topic filter) ----------
+class TestDomainAsyncJob:
+    """POST /api/domain/analyze returns processing quickly; poll GET /api/domain/{id}
+    until status=='done'. Validate depth (>=50 citation_sources, >=50 ranking_prompts)
+    and topic relevance (every ranking_prompt.topic ties to a top_topics entry)."""
+
+    def test_domain_async_depth_and_topic_relevance(self, auth_session):
+        # 1) POST must return quickly with status=processing
+        t0 = time.time()
+        r = auth_session.post(f"{API}/domain/analyze", json={"domain": "figma.com"}, timeout=10)
+        elapsed = time.time() - t0
+        assert r.status_code == 200, r.text
+        job = r.json()
+        assert job.get("status") == "processing", f"expected processing, got {job}"
+        assert "id" in job and isinstance(job["id"], str) and len(job["id"]) > 0
+        assert elapsed < 5.0, f"POST should return <5s, took {elapsed:.2f}s"
+        job_id = job["id"]
+
+        # 2) Poll GET /api/domain/{id} every ~4s up to ~2.5min
+        deadline = time.time() + 180
+        report = None
+        last_status = None
+        while time.time() < deadline:
+            time.sleep(4)
+            gr = auth_session.get(f"{API}/domain/{job_id}", timeout=15)
+            assert gr.status_code == 200, gr.text
+            report = gr.json()
+            last_status = report.get("status")
+            if last_status == "done":
+                break
+            if last_status == "error":
+                pytest.fail(f"domain job errored: {report.get('error')}")
+        assert last_status == "done", f"job did not finish in 180s, last status={last_status}"
+
+        # 3) Depth: >=50 citation_sources AND >=50 ranking_prompts
+        cites = report.get("citation_sources", [])
+        prompts = report.get("ranking_prompts", [])
+        assert isinstance(cites, list) and len(cites) >= 50, f"expected >=50 citation_sources, got {len(cites)}"
+        assert isinstance(prompts, list) and len(prompts) >= 50, f"expected >=50 ranking_prompts, got {len(prompts)}"
+
+        # 4) Contextual relevance: every ranking_prompt.topic matches a top_topic
+        top_topics = [t.get("topic", "").strip().lower()
+                      for t in report.get("top_topics", []) if isinstance(t, dict) and t.get("topic")]
+        assert top_topics, "top_topics missing/empty"
+
+        def matches(pt: str) -> bool:
+            pt = (pt or "").strip().lower()
+            return bool(pt) and any(pt == tt or pt in tt or tt in pt for tt in top_topics)
+
+        off_topic = [p for p in prompts if not matches(p.get("topic", ""))]
+        assert len(off_topic) == 0, (
+            f"{len(off_topic)}/{len(prompts)} ranking_prompts are off-topic. "
+            f"Example: {off_topic[0] if off_topic else None}. top_topics={top_topics}"
+        )
+
+        # 5) domain list excludes processing (this one is done, should appear)
+        rl = auth_session.get(f"{API}/domain", timeout=15)
+        assert rl.status_code == 200
+        assert any(x.get("id") == job_id for x in rl.json())
+
+    def test_domain_post_returns_processing_fast(self, auth_session):
+        """POST alone (no polling) must return within a couple seconds."""
+        t0 = time.time()
+        r = auth_session.post(f"{API}/domain/analyze", json={"domain": "stripe.com"}, timeout=5)
+        elapsed = time.time() - t0
+        assert r.status_code == 200
+        d = r.json()
+        assert d.get("status") == "processing"
+        assert elapsed < 3.0, f"POST should be near-instant, took {elapsed:.2f}s"
+        assert "id" in d
 
 
 # ---------- URL analysis + JS scraper fallback (iteration 2) ----------
