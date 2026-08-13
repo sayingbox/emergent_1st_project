@@ -1,0 +1,23 @@
+{
+  "summary": "Frontend auth regression retest after cross-origin API base fix in /app/frontend/src/lib/api.js. Tested on BOTH the alias hostname (llm-domain-metrics...) and the canonical hostname (723c8d12-...). All 6 requested flows PASS on both URLs: superadmin login, session persistence on reload, Domain Analysis navigation smoke, invalid-password specific error toast ('Invalid email or password'), and new-account registration ('Account created' toast, lands on /app). No 'Something went wrong' generic toast observed for any valid flow.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "api.js same-origin fallback is correct and minimal; consider logging the resolved API base once for easier future debugging.",
+    "The recurring 401 console noise from /api/auth/me on unauthenticated pages is expected but could be suppressed by only calling /me when a session hint exists."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped per request)", "frontend": "100% (6/6 flows on alias, 6/6 on canonical)"},
+  "test_credentials": "kiskobiswal@gmail.com / Kisko@123 (superadmin)",
+  "seed_data_creation": "Created two throwaway registered users: qa+ppk526gk@test.com and qa+u8ze8s8l@test.com (password Test@1234) — safe to purge.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Cross-origin auth cookie bug is resolved by same-origin fallback in /app/frontend/src/lib/api.js. When user opens alias URL, API base becomes window.location.origin, so httpOnly cookies work. Both alias and canonical URLs behave identically for login/register/session/refresh/invalid-pw/domain-analysis nav.",
+  "rca of the issue": "REACT_APP_BACKEND_URL pointed to canonical hostname while users opened the app via alias hostname. Cross-origin credentialed axios requests were blocked (ACAO wildcard incompatible with withCredentials), causing every auth POST to fail with a network error which surfaced as generic 'Something went wrong. Please try again.'. Fix: api.js compares window.location.origin to the env backend origin; if different, uses window.location.origin so requests are same-origin and cookies flow correctly. Verified on both hostnames."
+}

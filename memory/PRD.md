@@ -52,3 +52,9 @@ Build a tool that ingests content (URL or pasted text/markdown/HTML), scores it 
 
 ## Test Credentials
 See /app/memory/test_credentials.md
+
+## 2026-06 Fork: Login Bug Fix
+- Root cause: users open app via alias URL (llm-domain-metrics.preview.emergentagent.com) while REACT_APP_BACKEND_URL is the canonical UUID URL → cross-origin credentialed requests blocked → "Something went wrong" on login/register.
+- Fix: /app/frontend/src/lib/api.js now falls back to window.location.origin when it differs from the env backend origin.
+- Superadmin account kiskobiswal@gmail.com created (password Kisko@123).
+- Verified by testing agent: 6/6 auth flows pass on BOTH hostnames (iteration_5.json).
