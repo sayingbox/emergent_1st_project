@@ -512,30 +512,146 @@ class RedditInput(BaseModel):
     topic: str
 
 
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
 
 
-ENGINES_CHECKED = ["ChatGPT", "Claude", "Perplexity", "Google AI Overviews", "Gemini"]
+ENGINES_CHECKED = ["ChatGPT", "Claude", "Perplexity", "Gemini"]
+
+# ---------- Crawl-first business discovery ----------
+CRAWL_LINK_KEYWORDS = [
+    "service", "solution", "product", "about", "what-we-do", "platform",
+    "industr", "use-case", "offering", "capabilit", "technolog", "expertise",
+    "company", "who-we-are", "features", "pricing",
+]
 
 
-DOMAIN_SYSTEM = """You are a world-class GEO/AEO (Generative & Answer Engine Optimization) domain auditor and SEO metrics estimator.
-You evaluate how well a website is positioned to be surfaced and cited by leading AI engines (ChatGPT, Claude, Perplexity, Google AI Overviews, Gemini),
-and you provide realistic SEO / authority metrics AND an EXHAUSTIVE, DEEP-DIVE list of the real sources those AI engines pull brand knowledge from
-along with the actual prompts / search queries that domain plausibly ranks for. Ground every item in your knowledge of the brand.
-Be realistic: for unknown or small brands use LOW metrics and a SPARSE citation source list.
+def _page_from_html(url: str, html: str) -> dict:
+    soup = BeautifulSoup(html, "lxml")
+    for t in soup(["script", "style", "noscript", "nav", "footer", "header", "svg", "form"]):
+        t.decompose()
+    title = soup.title.string.strip() if (soup.title and soup.title.string) else None
+    headings = [h.get_text(" ", strip=True) for h in soup.find_all(["h1", "h2", "h3"]) if h.get_text(strip=True)][:20]
+    text = re.sub(r"\s+", " ", soup.get_text(" ", strip=True))
+    return {"url": url, "title": title, "headings": headings, "text": text[:6000]}
+
+
+async def crawl_business(domain: str, max_internal: int = 3) -> dict:
+    """Crawl the real website: homepage + a few key internal pages for business discovery."""
+    homepage_html = ""
+    base = f"https://{domain}"
+    for candidate in (f"https://{domain}", f"http://{domain}"):
+        try:
+            homepage_html = await fetch_html(candidate)
+            base = candidate
+            break
+        except Exception as e:
+            logger.warning(f"crawl: fetch failed for {candidate}: {e}")
+
+    pages, title, meta_description = [], None, None
+    if homepage_html:
+        soup = BeautifulSoup(homepage_html, "lxml")
+        if soup.title and soup.title.string:
+            title = soup.title.string.strip()
+        md = soup.find("meta", attrs={"name": "description"}) or soup.find("meta", attrs={"property": "og:description"})
+        if md and md.get("content"):
+            meta_description = md.get("content").strip()
+        pages.append(_page_from_html(base, homepage_html))
+        visited = {base.rstrip("/")}
+
+        scored = {}
+        for a in soup.find_all("a", href=True):
+            full = urljoin(base, a["href"].strip()).split("#")[0].rstrip("/")
+            p = urlparse(full)
+            if p.scheme not in ("http", "https") or domain not in p.netloc:
+                continue
+            if not full or full in visited or full in scored:
+                continue
+            path, anchor = p.path.lower(), a.get_text(" ", strip=True).lower()
+            sc = sum(1 for kw in CRAWL_LINK_KEYWORDS if kw in path) + sum(1 for kw in CRAWL_LINK_KEYWORDS if kw in anchor)
+            if sc > 0:
+                scored[full] = sc
+        for u in sorted(scored, key=lambda x: -scored[x])[:max_internal]:
+            try:
+                pages.append(_page_from_html(u, await fetch_html(u)))
+            except Exception:
+                continue
+
+    return {"title": title, "meta_description": meta_description, "pages": pages, "crawl_ok": bool(pages)}
+
+
+# ---------- Live-URL verification for citations ----------
+_LIVE_STATUSES = {200, 201, 202, 203, 204, 301, 302, 303, 307, 308, 401, 403, 405, 406, 429}
+
+
+def _check_url_live(url: str) -> bool:
+    try:
+        r = requests.head(url, headers={"User-Agent": UA}, timeout=6, allow_redirects=True)
+        if r.status_code in _LIVE_STATUSES:
+            return True
+        r = requests.get(url, headers={"User-Agent": UA}, timeout=8, allow_redirects=True, stream=True)
+        return r.status_code in _LIVE_STATUSES
+    except Exception:
+        try:
+            r = requests.get(url, headers={"User-Agent": UA}, timeout=8, allow_redirects=True, stream=True)
+            return r.status_code in _LIVE_STATUSES
+        except Exception:
+            return False
+
+
+async def verify_live_urls(urls: list) -> dict:
+    sem = asyncio.Semaphore(12)
+
+    async def one(u):
+        async with sem:
+            return u, await asyncio.to_thread(_check_url_live, u)
+
+    results = await asyncio.gather(*[one(u) for u in urls])
+    return {u: ok for u, ok in results}
+
+
+DOMAIN_SYSTEM = """You are a world-class GEO/AEO (Generative & Answer Engine Optimization) analyst running a strict CRAWL-FIRST analysis.
+You are given the ACTUAL crawled content of a company's website. Work in this exact order:
+1) BUSINESS DISCOVERY: from the crawled content ONLY, determine the company's real core business and the specific services/products they actually offer. Never invent services the site does not mention.
+2) TOPIC IDENTIFICATION: derive the topics they are genuinely relevant for, directly from those discovered services.
+3) AI SEARCH RANKING: for each topic, estimate whether and where the brand surfaces in AI Search (ChatGPT, Claude, Gemini, Perplexity).
+4) VERIFIED CITATIONS: list the real third-party sources (with specific, real, currently-live URLs) that AI engines pull this brand's information from. Only provide REAL URLs you are confident actually resolve (official pages, Wikipedia, LinkedIn company page, Crunchbase, G2, Capterra, Trustpilot, Clutch, Glassdoor, YouTube, well-known news/industry outlets). Do NOT fabricate deep URLs or invented slugs.
+5) RANKING PROMPTS: generate search-style ranking prompts based ONLY on the discovered business topics (e.g. 'content moderation company', 'trust and safety services').
+6) COMPETITORS: identify real companies competing for the SAME AI answers on those topics.
+Ground everything in the crawl plus your market knowledge of the brand. Be realistic: obscure brands get low scores and short lists.
 Respond with ONLY valid minified JSON. No markdown. No prose."""
 
 
-def domain_prompt(domain: str) -> str:
-    return f"""Produce an EXHAUSTIVE AI-search intelligence report for the domain "{domain}" based on your knowledge of this site/brand.
+def domain_prompt(domain: str, crawl: dict) -> str:
+    pages_ctx = [{
+        "url": pg["url"],
+        "title": pg.get("title"),
+        "headings": pg.get("headings", [])[:15],
+        "excerpt": pg.get("text", "")[:2500],
+    } for pg in crawl.get("pages", [])]
+    crawl_json = json.dumps({
+        "homepage_title": crawl.get("title"),
+        "meta_description": crawl.get("meta_description"),
+        "pages_crawled": pages_ctx,
+    })[:15000]
+    crawl_note = "" if crawl.get("crawl_ok") else "\n(NOTE: the live crawl returned little/no content — fall back to your own knowledge of this brand, and lower confidence/scores accordingly.)"
+
+    return f"""TARGET DOMAIN: "{domain}"
+
+Below is the ACTUAL crawled content from this website (homepage + key internal pages). Base the ENTIRE analysis on it.{crawl_note}
+
+CRAWLED_CONTENT:
+{crawl_json}
 
 Return valid minified JSON with EXACTLY this schema:
 {{
  "domain": "{domain}",
- "brand": "the official brand / product name",
- "brand_summary": "1-2 sentence factual description of what this domain / brand is",
- "ai_readiness_score": <0-100 overall: how well this brand can be cited by AI engines>,
+ "brand": "official brand/product name (from the crawl)",
+ "brand_summary": "1-2 sentence factual description of what this company does, grounded in the crawl",
+ "ai_readiness_score": <0-100 overall: how well this brand can be surfaced/cited by AI engines>,
  "known_by_ai": <bool - do major generative engines likely know this brand>,
+ "discovered_services": [
+   {{"name":"a specific service/product ACTUALLY offered per the crawl","evidence":"short phrase from the site proving it"}}
+ ],
  "metrics": {{
    "domain_authority": <0-100 Moz-style DA estimate>,
    "page_authority": <0-100 estimate for the homepage>,
@@ -552,34 +668,45 @@ Return valid minified JSON with EXACTLY this schema:
    {{"label":"Topical Coverage","score":<0-100>,"note":"..."}}
  ],
  "top_topics": [
-   {{"topic":"a topic this domain is GENUINELY authoritative on (must be relevant to the brand)","authority":<0-100>,"relevance":<0-100>}}
+   {{"topic":"business topic derived DIRECTLY from the discovered services","authority":<0-100>,"relevance":<0-100>}}
+ ],
+ "ai_search_rankings": [
+   {{"topic":"MUST be one of top_topics.topic","ranks":<bool - does the brand surface in AI answers for this topic>,"engines":["chatgpt","claude","gemini","perplexity"],"position":"top|recommended|passing|not_ranking","note":"why it does/doesn't surface"}}
  ],
  "citation_sources": [
-   {{"source":"the site/publication name AI pulls brand info from, e.g. Wikipedia, G2, TechCrunch, Product Hunt, Gartner, Reddit r/Xxx","url":"most likely specific URL","type":"encyclopedia|review|news|directory|social|official|forum|academic|blog|video|podcast|documentation","authority":<0-100>,"why":"what info AI extracts about the brand from here"}}
+   {{"source":"publication/site name AI pulls brand info from","url":"REAL, currently-live URL (must actually resolve — no invented slugs)","type":"encyclopedia|review|news|directory|social|official|forum|academic|blog|video|podcast|documentation","authority":<0-100>,"why":"what info AI extracts about the brand from here"}}
  ],
  "ranking_prompts": [
-   {{"prompt":"an actual query / prompt this domain plausibly surfaces for in AI answers","topic":"MUST be one of the top_topics.topic values","position":"top|recommended|passing","engines":["chatgpt","perplexity","google_ai","gemini"],"intent":"informational|commercial|navigational|comparison"}}
+   {{"prompt":"a natural search-style query based on a discovered topic, e.g. 'content moderation company'","topic":"MUST be one of top_topics.topic","position":"top|recommended|passing","engines":["chatgpt","perplexity","gemini","claude"],"intent":"informational|commercial|navigational|comparison"}}
  ],
  "quick_wins": [
-   {{"priority":"high|medium|low","action":"specific, concrete action to improve AI visibility"}}
+   {{"priority":"high|medium|low","action":"specific, concrete action to improve AI visibility for the discovered topics"}}
  ],
- "competitors": ["likely competitor domains competing for the same AI answers (root domains only, e.g. 'notion.so')"]
+ "competitors": [
+   {{"domain":"competitor root domain, e.g. 'besedo.com'","topic":"the shared discovered topic they compete on in AI search","note":"why they compete for the same AI answers"}}
+ ]
 }}
 
-STRICT REQUIREMENTS — these are non-negotiable:
-- top_topics: 6-10 topics, ONLY ones truly relevant to this brand, sorted by authority desc.
-- citation_sources: provide **AT LEAST 50** entries (target 50-60). Be exhaustive: include encyclopedias, industry reviews (G2, Capterra, Trustpilot), news outlets, YouTube / podcast mentions, Reddit / community threads, official docs, directories, comparison sites, LinkedIn, industry blogs, academic references, StackOverflow-style docs, Wikipedia language variants, etc. Only include sources that plausibly exist for this brand; ranked by authority desc. If the brand is truly obscure, still provide 50 realistic candidate source types (with lower authority) — do not return a short list.
-- ranking_prompts: provide **AT LEAST 50** entries (target 50-65). Every prompt MUST have a `topic` field whose value is one of top_topics[].topic. Spread prompts across all top_topics. Include a mix of intents (informational, commercial, navigational, comparison). Sort by position (top → recommended → passing).
-- categories: exactly 5 items, as listed.
+STRICT REQUIREMENTS — non-negotiable:
+- discovered_services: 4-10 items, ONLY services evidenced by the crawled content.
+- top_topics: 5-10, derived DIRECTLY from discovered_services, sorted by relevance desc.
+- ai_search_rankings: EXACTLY one entry per top_topic (same order).
+- ranking_prompts: 15-30, each `topic` MUST be one of top_topics[].topic; short natural queries spread across topics with mixed intents; sort top → recommended → passing.
+- citation_sources: 20-40 entries, each with a REAL live URL (no fabricated slugs); ranked by authority desc.
+- competitors: 5-10 real companies competing for the SAME topics in AI search.
+- categories: exactly the 5 listed.
 - quick_wins: 5-8 items.
-- competitors: 6-10 domains.
 - All numeric scores are integers 0-100.
 - Output must be a SINGLE valid minified JSON object. No trailing commas. No markdown fences."""
 
 
 async def _run_domain_analysis(job_id: str, user_id: str, domain: str):
     try:
-        res = await llm_json(DOMAIN_SYSTEM, domain_prompt(domain), f"domain-{user_id}", max_tokens=16000)
+        # 1) Crawl-first business discovery
+        crawl = await crawl_business(domain)
+
+        # 2-6) LLM analysis grounded in the crawl
+        res = await llm_json(DOMAIN_SYSTEM, domain_prompt(domain, crawl), f"domain-{user_id}", max_tokens=12000)
 
         # Normalise + defensively filter
         top_topics_raw = res.get("top_topics", []) or []
@@ -595,22 +722,44 @@ async def _run_domain_analysis(job_id: str, user_id: str, domain: str):
                 top_topics.append({"topic": t.strip(), "authority": 0, "relevance": 0})
         topic_names_lower = {t["topic"].lower() for t in top_topics}
 
+        def _tie_topic(topic: str) -> str:
+            topic = (topic or "").strip()
+            tlc = topic.lower()
+            if not top_topics:
+                return topic
+            if tlc in topic_names_lower or any(tlc and (tlc in tn or tn in tlc) for tn in topic_names_lower):
+                return topic
+            return top_topics[0]["topic"]
+
+        # Discovered services (crawl-grounded)
+        discovered_services = []
+        for s in (res.get("discovered_services", []) or []):
+            if isinstance(s, dict) and s.get("name"):
+                discovered_services.append({"name": str(s.get("name")).strip(), "evidence": str(s.get("evidence", "")).strip()})
+            elif isinstance(s, str) and s.strip():
+                discovered_services.append({"name": s.strip(), "evidence": ""})
+
+        # AI search rankings per topic
+        ai_search_rankings = []
+        for a in (res.get("ai_search_rankings", []) or []):
+            if not isinstance(a, dict) or not a.get("topic"):
+                continue
+            ai_search_rankings.append({
+                "topic": _tie_topic(str(a.get("topic")).strip()),
+                "ranks": bool(a.get("ranks", False)),
+                "engines": a.get("engines", []) or [],
+                "position": a.get("position", "not_ranking"),
+                "note": str(a.get("note", "")).strip(),
+            })
+
         # Ranking prompts — enforce topic tie-in
         ranking_prompts = []
         for p in (res.get("ranking_prompts", []) or []):
             if not isinstance(p, dict) or not p.get("prompt"):
                 continue
-            topic = str(p.get("topic", "")).strip()
-            topic_lc = topic.lower()
-            in_topics = topic_lc in topic_names_lower or any(
-                topic_lc in tn or tn in topic_lc for tn in topic_names_lower if topic_lc
-            )
-            if top_topics and not in_topics:
-                # tie to closest topic instead of dropping — keeps count high but keeps on-topic
-                topic = top_topics[0]["topic"]
             ranking_prompts.append({
                 "prompt": str(p.get("prompt")).strip(),
-                "topic": topic,
+                "topic": _tie_topic(str(p.get("topic", "")).strip()),
                 "position": p.get("position", "passing"),
                 "engines": p.get("engines", []) or [],
                 "intent": p.get("intent", "informational"),
@@ -618,27 +767,54 @@ async def _run_domain_analysis(job_id: str, user_id: str, domain: str):
         pos_order = {"top": 0, "recommended": 1, "passing": 2}
         ranking_prompts.sort(key=lambda r: pos_order.get(r.get("position"), 3))
 
-        # Citation sources — normalise
-        citation_sources = []
+        # Citation sources — normalise, then HTTP-verify (drop dead links)
+        raw_cites = []
         for c in (res.get("citation_sources", []) or []):
             if not isinstance(c, dict) or not c.get("source"):
                 continue
-            citation_sources.append({
+            url = str(c.get("url", "")).strip()
+            if url and not url.startswith("http"):
+                url = "https://" + url.lstrip("/")
+            if not url:
+                continue  # cannot verify a source without a URL
+            raw_cites.append({
                 "source": str(c.get("source")).strip(),
-                "url": c.get("url", ""),
+                "url": url,
                 "type": c.get("type", "reference"),
                 "authority": int(c.get("authority", 0) or 0),
                 "why": c.get("why", ""),
             })
+
+        liveness = await verify_live_urls(list({c["url"] for c in raw_cites}))
+        citation_sources = []
+        for c in raw_cites:
+            if liveness.get(c["url"]):
+                c["verified"] = True
+                citation_sources.append(c)
         citation_sources.sort(key=lambda c: -c.get("authority", 0))
+
+        # Competitors (crawl/topic grounded) — support dict or plain string
+        competitors = []
+        for c in (res.get("competitors", []) or []):
+            if isinstance(c, dict) and c.get("domain"):
+                competitors.append({
+                    "domain": str(c.get("domain")).strip(),
+                    "topic": _tie_topic(str(c.get("topic", "")).strip()) if c.get("topic") else "",
+                    "note": str(c.get("note", "")).strip(),
+                })
+            elif isinstance(c, str) and c.strip():
+                competitors.append({"domain": c.strip(), "topic": "", "note": ""})
 
         metrics = res.get("metrics", {}) or {}
         result = {
-            "data_source": "AI-simulated (Claude Sonnet 4.6, Emergent LLM key)",
+            "data_source": "Crawl-first (live site crawl) + AI analysis (Claude Sonnet 4.6). Citation URLs HTTP-verified live.",
             "brand": res.get("brand") or domain,
             "brand_summary": res.get("brand_summary", ""),
             "ai_readiness_score": int(res.get("ai_readiness_score", 0) or 0),
             "known_by_ai": bool(res.get("known_by_ai", False)),
+            "crawl_ok": crawl.get("crawl_ok", False),
+            "crawled_pages": [p["url"] for p in crawl.get("pages", [])],
+            "discovered_services": discovered_services,
             "metrics": {
                 "domain_authority": metrics.get("domain_authority"),
                 "page_authority": metrics.get("page_authority"),
@@ -650,10 +826,11 @@ async def _run_domain_analysis(job_id: str, user_id: str, domain: str):
             "categories": [c for c in (res.get("categories", []) or []) if isinstance(c, dict)],
             "engines_checked": ENGINES_CHECKED,
             "top_topics": top_topics,
+            "ai_search_rankings": ai_search_rankings,
             "citation_sources": citation_sources,
             "ranking_prompts": ranking_prompts,
             "quick_wins": [q for q in (res.get("quick_wins", []) or []) if isinstance(q, dict)],
-            "competitors": [c for c in (res.get("competitors", []) or []) if isinstance(c, str)][:12],
+            "competitors": competitors,
         }
         await db.domains.update_one({"id": job_id}, {"$set": {**result, "status": "done"}})
     except Exception as e:

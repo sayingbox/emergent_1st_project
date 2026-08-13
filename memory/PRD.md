@@ -58,3 +58,16 @@ See /app/memory/test_credentials.md
 - Fix: /app/frontend/src/lib/api.js now falls back to window.location.origin when it differs from the env backend origin.
 - Superadmin account kiskobiswal@gmail.com created (password Kisko@123).
 - Verified by testing agent: 6/6 auth flows pass on BOTH hostnames (iteration_5.json).
+
+## 2026-06 Crawl-First Domain Analysis (rebuilt)
+User spec: Domain Analysis must follow a strict crawl-first workflow.
+- **1. Business Discovery**: `crawl_business()` fetches the live homepage + up to 3 key internal pages (scored by service/about/product keywords) via `fetch_html` (static + Chromium fallback). Extracts titles, headings, body text.
+- **2. Topic Identification**: LLM (Claude Sonnet 4.6) is fed ONLY the crawled content → `discovered_services` (with on-site evidence quotes) → `top_topics` derived from those services.
+- **3. AI Search Ranking**: `ai_search_rankings` — one entry per topic, whether/where it surfaces across ChatGPT, Claude, Gemini, Perplexity (LLM-estimated, per user choice).
+- **4. Verified AI Citations**: LLM proposes real source URLs; backend HTTP-verifies EVERY URL concurrently (`verify_live_urls`, HEAD→GET, live statuses only) and DROPS dead links. Only verified-live URLs shown (marked `verified:true`, "Live" badge).
+- **5. Topic-Based Ranking Prompts**: `ranking_prompts` generated per discovered topic (e.g. "content moderation company"); tied to `top_topics`.
+- **6. Relevant Competitors**: `competitors` now objects {domain, topic, note} — companies ranking for the SAME topics in AI search.
+- Google AI Overviews removed from ENGINES_CHECKED (now ChatGPT/Claude/Perplexity/Gemini).
+- Frontend `DomainAnalysis.js`: new "Discovered business & services" (+crawled page links), "AI Search ranking" per-topic, "Live" verified badges on citations, richer competitor cards.
+- Files: `/app/backend/server.py` (crawl_business, verify_live_urls, DOMAIN_SYSTEM, domain_prompt, _run_domain_analysis), `/app/frontend/src/pages/DomainAnalysis.js`.
+- Verified end-to-end on foiwe.com: crawled 4 real pages, 9 services, 9 topics, 21 HTTP-verified live citations, 25 topic-based prompts, 9 topic-matched competitors. ~70s run.
