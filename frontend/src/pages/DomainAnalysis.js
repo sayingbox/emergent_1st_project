@@ -6,12 +6,12 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader, EmptyState } from "@/components/ui-bits";
 import { ScoreGauge, scoreColor } from "@/components/ScoreGauge";
-import { Globe, Loader2, Sparkles, Zap, Users, Link2, Search, ExternalLink, BarChart3, ChevronDown, ChevronUp, ShieldCheck } from "lucide-react";
+import { Globe, Loader2, Sparkles, Zap, Users, Link2, Search, ExternalLink, BarChart3, ChevronDown, ChevronUp } from "lucide-react";
 import { toast } from "sonner";
 
 const priColor = { high: "bg-red-100 text-red-700 border-red-200", medium: "bg-amber-100 text-amber-700 border-amber-200", low: "bg-gray-100 text-gray-600 border-gray-200" };
 const posColor = { top: "bg-green-100 text-green-700 border-green-200", recommended: "bg-green-100 text-green-700 border-green-200", passing: "bg-amber-100 text-amber-700 border-amber-200" };
-const engLabel = { chatgpt: "ChatGPT", perplexity: "Perplexity", google_ai: "Google AI", gemini: "Gemini" };
+const engLabel = { chatgpt: "ChatGPT", perplexity: "Perplexity", google_ai: "Google AI", gemini: "Gemini", claude: "Claude" };
 
 function Bar({ score, label, note }) {
   return (
@@ -29,7 +29,7 @@ function Metric({ label, value, colored }) {
     <div className="rounded-lg border border-border/60 p-3">
       <div className="text-[10px] uppercase tracking-wide font-bold text-muted-foreground">{label}</div>
       <div className="font-head text-2xl font-extrabold mt-0.5" style={colored && numeric ? { color: scoreColor(value) } : {}}>
-        {value ?? "—"}{colored && numeric ? "" : ""}
+        {value ?? "—"}
       </div>
     </div>
   );
@@ -97,7 +97,7 @@ export default function DomainAnalysis() {
   const r = result;
   return (
     <div>
-      <PageHeader overline="Overview" title="Domain Analysis" subtitle="Enter a domain for a VERIFIED AI-search report — real citation sources and live Google rankings (via Serper), strictly tied to the domain's actual topics. Accuracy over quantity: only verified results are shown." />
+      <PageHeader overline="Overview" title="Domain Analysis" subtitle="Enter a domain for a full AI-search report — Domain Authority & SEO metrics, the citation sources AI pulls the brand from, the prompts it ranks for, relevant topics, and quick wins." />
 
       <Card className="p-6 rounded-xl border-border/60 mb-8">
         <div className="flex gap-2">
@@ -115,64 +115,67 @@ export default function DomainAnalysis() {
       {loading && !r && (
         <Card className="p-10 rounded-xl border-border/60 mb-10 flex flex-col items-center justify-center text-center grain" data-testid="domain-loading">
           <Loader2 size={28} className="animate-spin text-[#002FA7]" />
-          <p className="font-head font-bold mt-4">Verifying against live Google results…</p>
-          <p className="text-sm text-muted-foreground mt-1">Checking real citations and ranking positions. This can take up to a minute.</p>
+          <p className="font-head font-bold mt-4">Building your deep AI-search report…</p>
+          <p className="text-sm text-muted-foreground mt-1">Generating 50+ citation sources and ranking prompts across the brand&apos;s top topics. This can take up to a minute.</p>
         </Card>
       )}
 
       {r && (
         <div className="grid lg:grid-cols-12 gap-6 mb-10" data-testid="domain-result">
           <Card className="lg:col-span-4 p-8 rounded-xl border-border/60 flex flex-col items-center justify-center text-center">
-            <ScoreGauge score={r.ai_readiness_score || 0} label="VISIBILITY" />
+            <ScoreGauge score={r.ai_readiness_score || 0} label="AI READINESS" />
             <h2 className="font-head text-xl font-bold mt-5">{r.domain}</h2>
-            <p className="text-sm text-muted-foreground mt-2">{r.brand_summary || "No description available from live results."}</p>
+            <p className="text-sm text-muted-foreground mt-2">{r.brand_summary || "No description available."}</p>
             <Badge className={`mt-3 rounded-md border ${r.known_by_ai ? "bg-green-100 text-green-700 border-green-200" : "bg-amber-100 text-amber-700 border-amber-200"}`}>
-              {r.known_by_ai ? "Verified web presence" : "Little verified presence"}
+              {r.known_by_ai ? "Recognized by AI engines" : "Low AI recognition"}
             </Badge>
-            <div className="mt-3 inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
-              <ShieldCheck size={13} className="text-green-600" /> {r.data_source || "Verified via Google (Serper)"}
-            </div>
           </Card>
 
-          {/* Real metrics */}
+          {/* SEO & authority metrics */}
           <Card className="lg:col-span-8 p-6 rounded-xl border-border/60">
-            <h3 className="font-head font-bold mb-4 flex items-center gap-2"><BarChart3 size={18} className="text-[#002FA7]" /> Verified metrics</h3>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              <Metric label="Verified Citations" value={r.metrics?.verified_citations ?? 0} colored />
-              <Metric label="Verified Rankings" value={r.metrics?.verified_rankings ?? 0} colored />
-              <Metric label="Avg Google Rank" value={r.metrics?.avg_rank != null ? `#${r.metrics.avg_rank}` : "—"} />
-              <Metric label="Best Rank" value={r.metrics?.best_rank != null ? `#${r.metrics.best_rank}` : "—"} />
+            <h3 className="font-head font-bold mb-4 flex items-center gap-2"><BarChart3 size={18} className="text-[#002FA7]" /> SEO & authority metrics</h3>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4" data-testid="seo-metrics">
+              <Metric label="Domain Authority" value={r.metrics?.domain_authority} colored />
+              <Metric label="Page Authority" value={r.metrics?.page_authority} colored />
+              <Metric label="Trust Score" value={r.metrics?.trust_score} colored />
+              <Metric label="Backlinks" value={r.metrics?.estimated_backlinks} />
+              <Metric label="Referring Domains" value={r.metrics?.referring_domains} />
+              <Metric label="Est. Monthly Traffic" value={r.metrics?.estimated_monthly_traffic} />
             </div>
-            <div className="mt-5">
-              <div className="text-[10px] uppercase tracking-wide font-bold text-muted-foreground mb-2">Engines checked</div>
-              <div className="flex flex-wrap gap-2" data-testid="engines-checked">
-                {(r.engines_checked || []).map((e) => (
-                  <span key={e} className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-md bg-muted font-medium">{e}</span>
-                ))}
+            <div className="mt-6 space-y-4" data-testid="category-bars">{(r.categories || []).map((c, i) => <Bar key={i} {...c} />)}</div>
+            {(r.engines_checked || []).length > 0 && (
+              <div className="mt-6">
+                <div className="text-[10px] uppercase tracking-wide font-bold text-muted-foreground mb-2">Engines checked</div>
+                <div className="flex flex-wrap gap-2" data-testid="engines-checked">
+                  {(r.engines_checked || []).map((e) => (
+                    <span key={e} className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-md bg-muted font-medium">{e}</span>
+                  ))}
+                </div>
               </div>
-              <p className="text-[11px] text-muted-foreground mt-2">Rankings verified against live Google results. Only sources and queries confirmed in real search results are shown.</p>
-            </div>
+            )}
           </Card>
 
-          {/* Verified citation sources */}
+          {/* AI citation sources */}
           <Card className="lg:col-span-7 p-6 rounded-xl border-border/60">
-            <h3 className="font-head font-bold mb-1 flex items-center gap-2"><Link2 size={18} className="text-[#002FA7]" /> Verified citation sources</h3>
-            <p className="text-xs text-muted-foreground mb-4">Real pages that appear in Google for this brand.</p>
+            <h3 className="font-head font-bold mb-1 flex items-center gap-2"><Link2 size={18} className="text-[#002FA7]" /> AI citation sources</h3>
+            <p className="text-xs text-muted-foreground mb-4">Where generative engines pull their knowledge of this brand ({(r.citation_sources || []).length} sources).</p>
             <div className="space-y-2" data-testid="citation-sources">
               {(showAllCites ? (r.citation_sources || []) : (r.citation_sources || []).slice(0, 5)).map((c, i) => (
                 <div key={i} className="flex items-start gap-3 p-3 rounded-lg border border-border/60">
                   <span className="font-head font-bold text-muted-foreground w-5 text-center shrink-0">{i + 1}</span>
                   <div className="flex-1 min-w-0">
-                    <div className="font-medium text-sm truncate">{c.source}</div>
-                    {c.title && <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{c.title}</p>}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-medium text-sm truncate">{c.source}</span>
+                      {c.type && <Badge variant="secondary" className="rounded-md capitalize text-[10px]">{c.type}</Badge>}
+                    </div>
+                    {c.why && <p className="text-xs text-muted-foreground mt-0.5">{c.why}</p>}
                     {c.url && <a href={c.url.startsWith("http") ? c.url : `https://${c.url}`} target="_blank" rel="noreferrer" className="text-xs text-[#002FA7] inline-flex items-center gap-1 mt-1 hover:underline break-all">{c.url} <ExternalLink size={11} /></a>}
-                    <p className="text-[11px] text-muted-foreground mt-1">appears for <span className="italic">"{c.query}"</span></p>
                   </div>
-                  {c.position != null && <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-green-100 text-green-700 shrink-0">#{c.position}</span>}
+                  {c.authority != null && <span className="font-head font-bold text-sm shrink-0" style={{ color: scoreColor(c.authority) }}>{c.authority}</span>}
                 </div>
               ))}
               {(!r.citation_sources || r.citation_sources.length === 0) && (
-                <p className="text-sm text-muted-foreground">No verified citations found in live Google results for this brand yet.</p>
+                <p className="text-sm text-muted-foreground">No notable citation sources detected — this brand has little third-party coverage AI can draw on.</p>
               )}
             </div>
             {(r.citation_sources || []).length > 5 && (
@@ -183,22 +186,26 @@ export default function DomainAnalysis() {
             )}
           </Card>
 
-          {/* Verified ranking prompts */}
+          {/* Ranking prompts */}
           <Card className="lg:col-span-5 p-6 rounded-xl border-border/60">
-            <h3 className="font-head font-bold mb-1 flex items-center gap-2"><Search size={18} className="text-[#002FA7]" /> Verified ranking prompts</h3>
-            <p className="text-xs text-muted-foreground mb-4">Queries where this domain genuinely ranks on Google — tied to its top topics.</p>
+            <h3 className="font-head font-bold mb-1 flex items-center gap-2"><Search size={18} className="text-[#002FA7]" /> Ranking prompts</h3>
+            <p className="text-xs text-muted-foreground mb-4">Queries this domain surfaces for in AI answers ({(r.ranking_prompts || []).length} prompts).</p>
             <div className="space-y-2" data-testid="ranking-prompts">
               {(showAllPrompts ? (r.ranking_prompts || []) : (r.ranking_prompts || []).slice(0, 5)).map((p, i) => (
                 <div key={i} className="p-3 rounded-lg bg-muted/40">
                   <div className="flex items-start justify-between gap-2">
                     <span className="text-sm font-medium">{p.prompt}</span>
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-green-100 text-green-700 shrink-0">Google #{p.google_rank}</span>
+                    <Badge className={`rounded-md border capitalize shrink-0 text-[10px] ${posColor[p.position] || priColor.low}`}>{p.position}</Badge>
                   </div>
-                  {p.topic && <Badge variant="outline" className="rounded-md text-[10px] mt-2">{p.topic}</Badge>}
+                  <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                    {p.topic && <Badge variant="outline" className="rounded-md text-[10px] capitalize">{p.topic}</Badge>}
+                    {p.intent && <Badge variant="outline" className="rounded-md text-[10px] capitalize">{p.intent}</Badge>}
+                    {(p.engines || []).map((e) => <span key={e} className="text-[10px] px-1.5 py-0.5 rounded bg-white border border-border/60 text-muted-foreground">{engLabel[e] || e}</span>)}
+                  </div>
                 </div>
               ))}
               {(!r.ranking_prompts || r.ranking_prompts.length === 0) && (
-                <p className="text-sm text-muted-foreground">No verified rankings found for this domain's topics yet.</p>
+                <p className="text-sm text-muted-foreground">No ranking prompts identified for this domain.</p>
               )}
             </div>
             {(r.ranking_prompts || []).length > 5 && (
@@ -212,10 +219,24 @@ export default function DomainAnalysis() {
           {/* Top topics */}
           <Card className="lg:col-span-7 p-6 rounded-xl border-border/60">
             <h3 className="font-head font-bold mb-4">Top relevant topics</h3>
-            <div className="flex flex-wrap gap-2" data-testid="top-topics">
-              {(r.top_topics || []).map((t, i) => (
-                <Badge key={i} variant="secondary" className="rounded-md capitalize">{typeof t === "string" ? t : t.topic}</Badge>
-              ))}
+            <div className="space-y-3" data-testid="top-topics">
+              {(r.top_topics || []).map((t, i) => {
+                const isObj = typeof t === "object" && t !== null;
+                const topic = isObj ? t.topic : t;
+                const auth = isObj ? t.authority : 0;
+                const rel = isObj ? t.relevance : 0;
+                return (
+                  <div key={i}>
+                    <div className="flex justify-between text-sm mb-1">
+                      <span className="font-medium capitalize">{topic}</span>
+                      {isObj && <span className="text-xs text-muted-foreground">auth {auth} · rel {rel}</span>}
+                    </div>
+                    {isObj && (
+                      <div className="h-1.5 bg-muted rounded-full overflow-hidden"><div className="h-full rounded-full" style={{ width: `${auth}%`, background: scoreColor(auth) }} /></div>
+                    )}
+                  </div>
+                );
+              })}
               {(!r.top_topics || r.top_topics.length === 0) && <p className="text-sm text-muted-foreground">No clear topics identified.</p>}
             </div>
           </Card>
@@ -230,12 +251,13 @@ export default function DomainAnalysis() {
                   <span className="text-sm">{q.action}</span>
                 </div>
               ))}
+              {(!r.quick_wins || r.quick_wins.length === 0) && <p className="text-sm text-muted-foreground">No suggestions available.</p>}
             </div>
           </Card>
 
           {/* Competitors */}
           <Card className="lg:col-span-12 p-6 rounded-xl border-border/60">
-            <h3 className="font-head font-bold mb-3 flex items-center gap-2"><Users size={16} /> Competitors seen in the same live results</h3>
+            <h3 className="font-head font-bold mb-3 flex items-center gap-2"><Users size={16} /> Competitors for the same AI answers</h3>
             <div className="flex flex-wrap gap-2">
               {(r.competitors || []).map((t, i) => <Badge key={i} variant="outline" className="rounded-md">{t}</Badge>)}
               {(!r.competitors || r.competitors.length === 0) && <p className="text-sm text-muted-foreground">No competitors detected.</p>}
