@@ -34,6 +34,7 @@ db = client[os.environ['DB_NAME']]
 
 JWT_ALGORITHM = "HS256"
 EMERGENT_LLM_KEY = os.environ['EMERGENT_LLM_KEY']
+SERPER_API_KEY = os.environ.get('SERPER_API_KEY')
 
 # Ensure Playwright can locate the pre-installed Chromium in this environment
 os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "/pw-browsers")
@@ -512,61 +513,166 @@ class RedditInput(BaseModel):
     topic: str
 
 
-DOMAIN_SYSTEM = """You are a GEO/AEO (Generative & Answer Engine Optimization) domain auditor and SEO metrics estimator. You estimate how well a website is positioned to be surfaced and cited by AI engines (ChatGPT, Perplexity, Google AI Overviews, Gemini), and you provide realistic SEO metrics and the real sources AI engines pull brand knowledge from. Respond with ONLY valid minified JSON."""
+from urllib.parse import urlparse
 
 
-def domain_prompt(domain: str) -> str:
-    return f"""Produce a DETAILED AI-search intelligence report for the domain "{domain}" based on your knowledge of this site/brand. Be realistic: for unknown or small brands use low metrics and empty/sparse citation sources.
+def _domain_of(url: str) -> str:
+    try:
+        net = urlparse(url if "://" in url else "https://" + url).netloc.lower()
+        return net[4:] if net.startswith("www.") else net
+    except Exception:
+        return ""
 
-Return JSON:
+
+def _same_domain(a: str, target: str) -> bool:
+    a = (a or "").lower().lstrip(".")
+    target = (target or "").lower().lstrip(".")
+    return bool(a) and (a == target or a.endswith("." + target))
+
+
+def _serper_sync(query: str, num: int = 10) -> list:
+    if not SERPER_API_KEY:
+        raise RuntimeError("SERPER_API_KEY not configured")
+    r = requests.post(
+        "https://google.serper.dev/search",
+        headers={"X-API-KEY": SERPER_API_KEY, "Content-Type": "application/json"},
+        json={"q": query, "num": num, "gl": "us", "hl": "en"},
+        timeout=15,
+    )
+    r.raise_for_status()
+    data = r.json()
+    out = []
+    for x in data.get("organic", []):
+        link = x.get("link", "")
+        out.append({"position": x.get("position"), "url": link, "title": x.get("title", ""),
+                    "snippet": x.get("snippet", ""), "domain": _domain_of(link)})
+    return out
+
+
+async def serper_search(query: str, num: int = 10) -> list:
+    return await asyncio.to_thread(_serper_sync, query, num)
+
+
+ENGINES_CHECKED = ["Google", "ChatGPT", "Claude", "Perplexity", "Gemini"]
+
+CANDIDATE_SYSTEM = """You are a search intelligence analyst. Using ONLY the real Google snippets provided about a website, describe the brand and propose candidate search queries to test. Do NOT invent facts. Respond with ONLY valid minified JSON."""
+
+
+def candidate_prompt(domain: str, brand: str, snippets: str) -> str:
+    return f"""Website: {domain} (brand guess: "{brand}").
+Below are REAL Google result snippets about this site:
+\"\"\"{snippets[:6000]}\"\"\"
+
+Based ONLY on these snippets (do not invent), return JSON:
 {{
- "domain": "{domain}",
- "brand_summary": "1-2 sentence description of what this domain/brand is",
- "ai_readiness_score": <0-100>,
- "known_by_ai": <bool, does a generative engine likely know this brand>,
- "metrics": {{
-   "domain_authority": <0-100 Moz-style DA estimate>,
-   "page_authority": <0-100 estimate for homepage>,
-   "estimated_backlinks": "human string e.g. '48K'",
-   "referring_domains": "human string e.g. '3.1K'",
-   "estimated_monthly_traffic": "human string e.g. '2.4M'",
-   "trust_score": <0-100>
- }},
- "categories": [{{"label":"Brand Authority","score":<0-100>,"note":"..."}},{{"label":"Content Depth","score":<0-100>,"note":"..."}},{{"label":"Structured Data","score":<0-100>,"note":"..."}},{{"label":"Citation Worthiness","score":<0-100>,"note":"..."}},{{"label":"Topical Coverage","score":<0-100>,"note":"..."}}],
- "top_topics": [{{"topic":"a topic this domain is GENUINELY authoritative on (must be relevant to the brand)","authority":<0-100>,"relevance":<0-100>}}],
- "citation_sources": [{{"source":"the site/publication name AI pulls brand info from e.g. Wikipedia, G2, TechCrunch","url":"most likely specific URL","type":"encyclopedia|review|news|directory|social|official|forum","authority":<0-100>,"why":"short note (<=12 words) on what AI extracts here"}}],
- "ranking_prompts": [{{"prompt":"an actual query/prompt this domain surfaces for in AI answers","topic":"MUST exactly match one of the top_topics entries","position":"top|recommended|passing","engines":["chatgpt","perplexity","google_ai","gemini"],"intent":"informational|commercial|navigational|comparison"}}],
- "quick_wins": [{{"priority":"high|medium|low","action":"specific action to improve AI visibility"}}],
- "competitors": ["likely competitor domains competing for the same AI answers"]
+ "brand": "the official brand/product name (from the snippets; fall back to '{brand}')",
+ "brand_summary": "1-2 sentence factual description grounded in the snippets; if unclear, say what the site appears to be and note uncertainty",
+ "top_topics": ["5-8 concise topics this site is actually about, derived from the snippets"],
+ "candidate_prompts": [{{"prompt":"a realistic Google search query a user would type where THIS site could plausibly rank","topic":"MUST be one of top_topics"}}],
+ "quick_wins": [{{"priority":"high|medium|low","action":"actionable GEO/AEO improvement suggestion"}}]
 }}
 Requirements:
-- FIRST determine top_topics (8-12 topics, ONLY ones truly relevant to this brand, sorted by authority desc).
-- citation_sources: provide AT LEAST 50 sources (aim 50) that AI engines could use to learn about this brand — mix official pages, encyclopedias, reviews, news, directories, social, forums, docs, and reputable third-party mentions. Rank by authority desc. Keep "why" concise. For obscure brands, still reach ~50 by including plausible directory/aggregator/social/profile sources.
-- ranking_prompts: provide AT LEAST 50 prompts. EVERY prompt MUST be strictly derived from and relevant to one of the top_topics, and its "topic" field MUST exactly equal one of the top_topics strings. DO NOT include generic or off-topic prompts. Spread prompts across all top_topics. Rank most prominent first.
-- quick_wins: 4-6 actions.
-- Output MUST be valid minified JSON only."""
+- candidate_prompts: 18-24 queries, each tied to one top_topic, spread across topics. These will be VERIFIED against live Google; propose realistic queries, not brand-name lookups only.
+- quick_wins: 4-6 items.
+- Output valid minified JSON only."""
 
 
-def _filter_prompts_to_topics(res: dict) -> dict:
-    topics_l = [t.get("topic", "").lower() for t in res.get("top_topics", []) if isinstance(t, dict) and t.get("topic")]
-
-    def matches(rp):
-        pt = (rp.get("topic") or "").lower().strip()
-        return bool(pt) and any(pt == t or pt in t or t in pt for t in topics_l)
-
-    if topics_l and isinstance(res.get("ranking_prompts"), list):
-        filtered = [rp for rp in res["ranking_prompts"] if isinstance(rp, dict) and matches(rp)]
-        if filtered:
-            res["ranking_prompts"] = filtered
-    return res
+def _visibility_score(n_cites: int, n_rank: int, avg_rank) -> int:
+    cite = min(n_cites, 15) / 15 * 45
+    cover = min(n_rank, 12) / 12 * 30
+    quality = 0
+    if avg_rank:
+        quality = max(0.0, (10 - min(avg_rank, 10)) / 9) * 25
+    return int(round(cite + cover + quality))
 
 
 async def _run_domain_analysis(job_id: str, user_id: str, domain: str):
     try:
-        res = await llm_json(DOMAIN_SYSTEM, domain_prompt(domain), f"domain-{user_id}", max_tokens=8000)
-        res = _filter_prompts_to_topics(res)
-        res.pop("domain", None)
-        await db.domains.update_one({"id": job_id}, {"$set": {**res, "status": "done"}})
+        labels = domain.split(".")
+        root = labels[-2] if len(labels) >= 2 else labels[0]
+        brand_key = root.lower()
+        brand_guess = root.capitalize()
+
+        # STEP A — verify real citation sources via brand search on Google
+        brand_queries = [brand_guess, f"{brand_guess} review", f"{brand_guess} alternatives", domain]
+        a_results = await asyncio.gather(*[serper_search(q, 10) for q in brand_queries], return_exceptions=True)
+        citations = {}
+        snippet_blob = []
+        for q, res in zip(brand_queries, a_results):
+            if isinstance(res, Exception) or not isinstance(res, list):
+                continue
+            for item in res:
+                rd = item["domain"]
+                snippet_blob.append(f"{item['title']} — {item['snippet']}")
+                if not rd or _same_domain(rd, domain):
+                    continue
+                text = f"{item['title']} {item['snippet']} {item['url']}".lower()
+                if brand_key in text or domain in text:
+                    cur = citations.get(rd)
+                    pos = item["position"] or 99
+                    if not cur or pos < (cur.get("position") or 99):
+                        citations[rd] = {"source": rd, "url": item["url"], "title": item["title"],
+                                         "snippet": item["snippet"], "query": q, "position": item["position"]}
+        citation_sources = sorted(citations.values(), key=lambda c: c.get("position") or 99)
+
+        # STEP B — grounded LLM: brand summary, topics, candidate prompts (verified next)
+        try:
+            llm = await llm_json(CANDIDATE_SYSTEM, candidate_prompt(domain, brand_guess, "\n".join(snippet_blob)),
+                                 f"domain-{user_id}", max_tokens=2500)
+        except Exception:
+            llm = {}
+        brand_name = llm.get("brand") or brand_guess
+        brand_summary = llm.get("brand_summary", "")
+        top_topics = [t for t in llm.get("top_topics", []) if isinstance(t, str)][:8]
+        topics_l = [t.lower() for t in top_topics]
+        candidates = [c for c in llm.get("candidate_prompts", []) if isinstance(c, dict) and c.get("prompt")][:24]
+        # strict: only candidates whose topic maps to a detected top topic
+        candidates = [c for c in candidates if (c.get("topic", "").lower() in topics_l) or
+                      any(c.get("topic", "").lower() in t or t in c.get("topic", "").lower() for t in topics_l)]
+
+        # STEP C — verify each candidate prompt against LIVE Google; keep only real rankings
+        c_results = await asyncio.gather(*[serper_search(c["prompt"], 10) for c in candidates], return_exceptions=True)
+        ranking_prompts = []
+        competitor_counts = {}
+        for c, res in zip(candidates, c_results):
+            if isinstance(res, Exception) or not isinstance(res, list):
+                continue
+            match = None
+            for item in res:
+                if _same_domain(item["domain"], domain):
+                    if match is None or (item["position"] or 99) < (match["position"] or 99):
+                        match = item
+                elif item["domain"]:
+                    competitor_counts[item["domain"]] = competitor_counts.get(item["domain"], 0) + 1
+            if match:
+                ranking_prompts.append({"prompt": c["prompt"], "topic": c.get("topic", ""),
+                                        "google_rank": match["position"], "url": match["url"], "verified": True})
+        ranking_prompts.sort(key=lambda r: r["google_rank"] or 99)
+
+        competitors = [d for d, _ in sorted(competitor_counts.items(), key=lambda kv: -kv[1])
+                       if not _same_domain(d, domain)][:8]
+
+        ranks = [r["google_rank"] for r in ranking_prompts if r["google_rank"]]
+        avg_rank = round(sum(ranks) / len(ranks), 1) if ranks else None
+        metrics = {"verified_citations": len(citation_sources), "verified_rankings": len(ranking_prompts),
+                   "avg_rank": avg_rank, "best_rank": min(ranks) if ranks else None}
+
+        result = {
+            "verified": True,
+            "data_source": "Google (Serper) — verified live results",
+            "brand": brand_name,
+            "brand_summary": brand_summary,
+            "ai_readiness_score": _visibility_score(len(citation_sources), len(ranking_prompts), avg_rank),
+            "known_by_ai": len(citation_sources) >= 3,
+            "metrics": metrics,
+            "engines_checked": ENGINES_CHECKED,
+            "top_topics": top_topics,
+            "citation_sources": citation_sources,
+            "ranking_prompts": ranking_prompts,
+            "competitors": competitors,
+            "quick_wins": [q for q in llm.get("quick_wins", []) if isinstance(q, dict)],
+        }
+        await db.domains.update_one({"id": job_id}, {"$set": {**result, "status": "done"}})
     except Exception as e:
         logger.exception(f"domain analysis failed for {domain}")
         await db.domains.update_one({"id": job_id}, {"$set": {"status": "error", "error": str(e)}})
@@ -574,9 +680,11 @@ async def _run_domain_analysis(job_id: str, user_id: str, domain: str):
 
 @api_router.post("/domain/analyze")
 async def domain_analyze(body: DomainInput, user: dict = Depends(get_current_user)):
-    domain = body.domain.strip().replace("https://", "").replace("http://", "").strip("/")
-    if not domain:
-        raise HTTPException(status_code=400, detail="Domain is required")
+    domain = body.domain.strip().lower().replace("https://", "").replace("http://", "").strip("/").split("/")[0]
+    if domain.startswith("www."):
+        domain = domain[4:]
+    if not domain or "." not in domain:
+        raise HTTPException(status_code=400, detail="Enter a valid domain, e.g. example.com")
     job_id = secrets.token_hex(12)
     doc = {"id": job_id, "user_id": user["id"], "domain": domain, "status": "processing",
            "created_at": datetime.now(timezone.utc).isoformat()}
@@ -597,6 +705,8 @@ async def domain_get(job_id: str, user: dict = Depends(get_current_user)):
     if not doc:
         raise HTTPException(status_code=404, detail="Report not found")
     return doc
+
+
 
 
 

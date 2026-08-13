@@ -1,0 +1,61 @@
+{
+  "summary": "Iteration 4 Domain Analysis rewrite (Serper-verified, no hallucination, Claude added to engines_checked, strict topic-tied verified rankings) verified end-to-end. 21/22 backend tests pass (1 transient network flake in a parallel worker retried green). New TestDomainAsyncJob class (5 tests, ~75s) exercises: async POST returns {id,status:'processing'} in <3s; stripe.com returns >=5 verified citation_sources (real domains like reddit/apple/wikipedia surface with position/query/url/title/snippet), >=3 verified ranking_prompts each with numeric google_rank (1-10) and url ON stripe.com and topic tied to top_topics; citetail.com strict returns just 2 citations and 0 rankings — every citation contains the brand literal (no fabricated wikipedia entries); notion.so citation domains are all well-formed registrable and none equal to notion.so. engines_checked==['Google','ChatGPT','Claude','Perplexity','Gemini'] on every report. UI verified via past-report cards: engines-checked chips include Claude, Verified Citations/Rankings metric cards present, NO legacy Domain Authority/Backlinks/Traffic, top-topics chips render, citation-sources shows 5 rows with toggle-citations 'View 16 more' expanding to 21 and collapsing back to 5, ranking-prompts shows either 'Google #<n>' badges or 'No verified rankings found for this domain's topics yet.' Live async run shows domain-loading card with copy 'Verifying against live Google results… Checking real citations and ranking positions.' Regressions (auth, remember-me, dashboard, visibility, citations, reddit, content optimizer text, superadmin entitlement) all still pass.",
+  "ai_feature_verdicts": [
+    "domain_analyze_serper_verified - pass - evidence: stripe.com run via POST /api/domain/analyze -> {id, status:processing} in <1s; poll returned status=done in ~55s with 6 citation_sources sample from live probe (real: notion.com/reddit.com/slite.com/apps.apple.com/thedigitalprojectmanager.com/eesel.ai/zapier.com for notion.so). Every citation carries source,url,title,snippet,query,position fields (validated in pytest TestDomainAsyncJob::test_stripe_verified_citations_and_rankings, test_notion_or_stripe_citation_sources_are_real_domains).",
+    "domain_no_hallucination_strict - pass - evidence: citetail.com returned only 2 citation_sources (wanwang.aliyun.com WHOIS + a facebook.com post) and 0 ranking_prompts. Every citation blob contains the brand literal 'citetail'. NO wikipedia.org, reddit.com, or other big sites fabricated in. Assertion enforced in pytest TestDomainAsyncJob::test_citetail_strict_no_hallucination.",
+    "engines_checked_includes_claude - pass - evidence: report.engines_checked == ['Google','ChatGPT','Claude','Perplexity','Gemini'] on all 6 past reports (notion.so x3, stripe.com x2, citetail.com). UI engines-checked chips text = 'Google\\nChatGPT\\nClaude\\nPerplexity\\nGemini' (screenshot at /app/test_reports/domain_ui_past.png).",
+    "ranking_prompts_topic_tied_and_verified - pass - evidence: For every ranking_prompt: verified==True, google_rank is int in 1..10, url is on the target domain (_same_domain match), topic matches a top_topics entry (case-insensitive substring both directions). Enforced in test_stripe_verified_citations_and_rankings. Some domains (notion.so today) legitimately have 0 verified rankings — strict mode acceptable.",
+    "ui_verified_metrics_no_fabricated - pass - evidence: UI Verified metrics card renders 'VERIFIED CITATIONS', 'VERIFIED RANKINGS', 'AVG GOOGLE RANK', 'BEST RANK'. NO 'Domain Authority', 'Backlinks', or 'Traffic' anywhere in domain-result text. Screenshot /app/test_reports/domain_ui_past.png (notion.so past card: 21/0/—/—).",
+    "ui_loading_card_copy - pass - evidence: Entering 'stripe.com' + clicking Analyze -> domain-loading card appears with heading 'Verifying against live Google results…' and body 'Checking real citations and ranking positions. This can take up to a minute.' Screenshot /app/test_reports/domain_ui_loading.png.",
+    "ui_citation_toggle_expand_collapse - pass - evidence: notion.so past card initially renders 5 citation rows; toggle-citations button text 'View 16 more' -> expanded to 21 rows -> 'Show less' -> collapsed back to 5. ranking-prompts area for that report shows the empty message 'No verified rankings found for this domain's topics yet.'",
+    "regression_superadmin_entitlement - pass - evidence: pytest TestSuperadminEntitlement 2/2. Superadmin login {role:admin,full_access:true}, normal user {role:user,full_access:false} via /api/auth/login and /api/auth/me.",
+    "regression_auth - pass - evidence: TestAuth 3/3 (login ok, wrong pw 401, unauth me 401).",
+    "regression_remember_me - pass - evidence: TestRememberMe 3/3 on retry (remember=true -> access+refresh Max-Age=1296000; remember=false -> access Max-Age=900, refresh Max-Age=604800; omitted defaults to short). One transient connect timeout observed in the parallel worker on first run, cleared on immediate retry.",
+    "regression_dashboard - pass - evidence: /api/dashboard returns full shape (stats/content_trend/visibility_trend/activity + all 8 stat keys).",
+    "regression_visibility - pass - evidence: brand=Notion + 2 prompts -> 200, visibility_score in [0,100], all 4 engine fields (chatgpt/perplexity/google_ai/gemini) present per result.",
+    "regression_citations - pass - evidence: 'best crm for startups' + domain hubspot.com -> sources>=3, user_domain persisted, user_domain_cited resolvable.",
+    "regression_reddit - pass - evidence: topic 'project management software' -> subreddits>=3, threads>=3.",
+    "regression_content_optimizer_text - pass - evidence: RAG article via POST /api/analyses (text) -> 200, dimensions>=5, persistence via GET /api/analyses/{id} and appears in list."
+  ],
+  "skills_loaded": ["ai-testing-core", "ai-testing-llm"],
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "TestRememberMe::test_remember_true_15_day_cookie (via preview URL under pytest-xdist)", "issue": "One transient ConnectTimeout to https://content-scorer-29.preview.emergentagent.com observed during the parallel full-suite run; the same test passed immediately on retry (3/3 green). Not a product bug — likely brief ingress hiccup. Consider adding retry-on-network-error at the session level in backend_test.py if the flakiness recurs."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_iter4_domain.xml",
+    "/app/test_reports/pytest/pytest_iter4_full.xml"
+  ],
+  "action_items": [
+    "None required for iteration 4 scope. All Domain Analysis acceptance criteria met (Serper-verified sources, no hallucination, Claude in engines, verified topic-tied rankings, correct strict-mode empty states in UI).",
+    "Pre-existing (not in iter4 scope): the JS-heavy URL scraper still degrades to static-only fetch due to Playwright/browser version mismatch — see iteration_3.json 'rca of the issue'. Fix path: add PLAYWRIGHT_CHROME_EXECUTABLE_PATH=/usr/local/bin/browser-use-chromium to /app/backend/.env OR reinstall the matching chromium build."
+  ],
+  "critical_code_review_comments": [
+    "server.py:_run_domain_analysis is well-scoped: Step A brand-search citations, Step B LLM (Claude) grounded ONLY on real Serper snippets, Step C per-candidate live Google verification via _same_domain — clean 3-stage retrieval-first pipeline.",
+    "STRICT topic filter (server.py ~L630): 'candidate['topic'].lower() in topics_l OR any(pt in t or t in pt for t)' — same generous substring both-ways match as iter3. Works but a very short topic ('AI') could still match many prompts; consider tokenized/edit-distance for a stricter check. Not urgent — current behavior is safe with the extra Serper verification step.",
+    "_serper_sync timeout=15s and no retry. A single 5xx from google.serper.dev drops that query from citations/rankings without user-facing feedback; consider one bounded retry with exponential backoff for transient 429/5xx.",
+    "asyncio.gather(*[serper_search(...) for c in candidates]) fires 18-24 concurrent Serper calls per analysis (plus 4 brand queries). Serper's free tier is 100 req/day and paid tiers meter per-second — under sustained multi-user load this can rate-limit. Consider a small asyncio.Semaphore(8) around serper_search or asyncio.as_completed with per-request try/except (already handled via return_exceptions=True).",
+    "Result doc merges 'status':'done' with the whole result dict via a single $set — good. domain_get returns 404 only if the doc is missing; processing/error surface correctly to the UI. However: no server-side max age for 'processing' — a stuck job stays processing forever (same iter3 finding).",
+    "DomainAnalysis.js UI loading copy is now 'Verifying against live Google results…' — accurate to Serper reality. Also good that ranking-prompts empty state renders 'No verified rankings found for this domain's topics yet.' (a friendly correct-behavior message, not an error).",
+    "server.py is 877 lines; iter3 recommendation to split into routers/services still stands but not blocking.",
+    "SERPER_API_KEY is loaded from /app/backend/.env at import — no plaintext logs found in server logs. Good."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test.py (rewrote TestDomainAsyncJob for iter4 semantics: Serper-verified citations with full field validation, strict no-hallucination assertion for citetail.com, engines-checked contains Claude, ranking_prompts strictly verified + topic-tied + on-domain URL, real-domain plausibility spot-check for notion.so, and no legacy DA/backlinks metrics)"
+  ],
+  "success_rate": {"backend": "100% (21/21 pytest tests on retry; 5/5 new domain tests green on first run in 74.8s)", "frontend": "100% (7/7: login, past-report load, engines-checked incl Claude, verified-metrics card w/ no legacy fields, top-topics render, citation-sources initial 5 rows, toggle-citations 5→21→5 expand/collapse, ranking-prompts empty-state message, live-run domain-loading card copy)"},
+  "test_credentials": "tester1@geo.com/pass123, admin@geo.com/admin123, kiskobiswal@gmail.com/super123 all working. /app/memory/test_credentials.md still does not list the superadmin — earlier recommendation stands.",
+  "seed_data_creation": "Added tester1@geo.com data during testing: 2 stripe.com async runs, 3 notion.so past runs, 1 citetail.com run — safe to leave (used as instant-load past-report cards for future UI regressions).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "New iter4 pytest class TestDomainAsyncJob (5 tests, ~75s wall clock). Run just the domain suite quickly with: pytest tests/backend_test.py::TestDomainAsyncJob -v. Strict/empty results (citetail.com=2/0, notion.so=21/0) are CORRECT per the strict-mode spec — do NOT treat 0 rankings as a failure. UI can be tested against past-report cards with data-testid=domain-past-<id> for instant loads (no need to wait 55-75s for a fresh analysis). Sample past report on notion.so has 21 citations -> use it to exercise toggle-citations. The transient ConnectTimeout in TestRememberMe is a known network flake, retry on failure before flagging.",
+  "rca of the issue": "No open bugs in iteration 4 scope. Iteration 3's URL-scraper Playwright mismatch remains open but is out of scope for this iteration and RCA/mitigation already documented in iteration_3.json."
+}

@@ -262,49 +262,82 @@ class TestSuperadminEntitlement:
         assert me.json()["full_access"] is False
 
 
-# ---------- Iteration 3: Domain async job (depth + topic filter) ----------
-class TestDomainAsyncJob:
-    """POST /api/domain/analyze returns processing quickly; poll GET /api/domain/{id}
-    until status=='done'. Validate depth (>=50 citation_sources, >=50 ranking_prompts)
-    and topic relevance (every ranking_prompt.topic ties to a top_topics entry)."""
+# ---------- Iteration 4: Domain async job (Serper-verified, strict, no hallucination) ----------
+def _poll_domain(auth_session, job_id, deadline_s=180):
+    deadline = time.time() + deadline_s
+    report = None
+    while time.time() < deadline:
+        time.sleep(4)
+        gr = auth_session.get(f"{API}/domain/{job_id}", timeout=15)
+        assert gr.status_code == 200, gr.text
+        report = gr.json()
+        s = report.get("status")
+        if s == "done":
+            return report
+        if s == "error":
+            pytest.fail(f"domain job errored: {report.get('error')}")
+    pytest.fail(f"job did not finish in {deadline_s}s, last status={report.get('status') if report else None}")
 
-    def test_domain_async_depth_and_topic_relevance(self, auth_session):
-        # 1) POST must return quickly with status=processing
+
+class TestDomainAsyncJob:
+    """POST /api/domain/analyze returns {id,status:'processing'} fast.
+    Poll GET /api/domain/{id} to done. Verify Serper-verified citations/rankings and
+    Claude in engines_checked, strict topic ties, and no fabrication for obscure sites."""
+
+    def test_domain_post_returns_processing_fast(self, auth_session):
         t0 = time.time()
-        r = auth_session.post(f"{API}/domain/analyze", json={"domain": "figma.com"}, timeout=10)
+        r = auth_session.post(f"{API}/domain/analyze", json={"domain": "stripe.com"}, timeout=5)
         elapsed = time.time() - t0
         assert r.status_code == 200, r.text
-        job = r.json()
-        assert job.get("status") == "processing", f"expected processing, got {job}"
-        assert "id" in job and isinstance(job["id"], str) and len(job["id"]) > 0
-        assert elapsed < 5.0, f"POST should return <5s, took {elapsed:.2f}s"
-        job_id = job["id"]
+        d = r.json()
+        assert d.get("status") == "processing"
+        assert elapsed < 3.0, f"POST should be near-instant, took {elapsed:.2f}s"
+        assert "id" in d
 
-        # 2) Poll GET /api/domain/{id} every ~4s up to ~2.5min
-        deadline = time.time() + 180
-        report = None
-        last_status = None
-        while time.time() < deadline:
-            time.sleep(4)
-            gr = auth_session.get(f"{API}/domain/{job_id}", timeout=15)
-            assert gr.status_code == 200, gr.text
-            report = gr.json()
-            last_status = report.get("status")
-            if last_status == "done":
-                break
-            if last_status == "error":
-                pytest.fail(f"domain job errored: {report.get('error')}")
-        assert last_status == "done", f"job did not finish in 180s, last status={last_status}"
+    def test_domain_empty_400(self, auth_session):
+        r = auth_session.post(f"{API}/domain/analyze", json={"domain": ""}, timeout=15)
+        assert r.status_code == 400
 
-        # 3) Depth: >=50 citation_sources AND >=50 ranking_prompts
+    def test_stripe_verified_citations_and_rankings(self, auth_session):
+        """Well-known domain: expect verified real citation domains, Claude in engines,
+        every ranking prompt tied to a top_topic AND has a numeric google_rank."""
+        r = auth_session.post(f"{API}/domain/analyze", json={"domain": "stripe.com"}, timeout=10)
+        assert r.status_code == 200, r.text
+        job_id = r.json()["id"]
+        report = _poll_domain(auth_session, job_id, deadline_s=180)
+
+        # Engines checked must include Claude in the exact required order.
+        assert report.get("engines_checked") == ["Google", "ChatGPT", "Claude", "Perplexity", "Gemini"], \
+            report.get("engines_checked")
+
+        # Verified flag + Serper data source
+        assert report.get("verified") is True
+        assert "Serper" in (report.get("data_source") or "")
+
         cites = report.get("citation_sources", [])
         prompts = report.get("ranking_prompts", [])
-        assert isinstance(cites, list) and len(cites) >= 50, f"expected >=50 citation_sources, got {len(cites)}"
-        assert isinstance(prompts, list) and len(prompts) >= 50, f"expected >=50 ranking_prompts, got {len(prompts)}"
+        # For stripe.com we expect meaningful signal (self-test showed 18 cites / 15 rankings)
+        assert isinstance(cites, list) and len(cites) >= 5, f"stripe.com should have >=5 verified citations, got {len(cites)}"
+        assert isinstance(prompts, list) and len(prompts) >= 3, f"stripe.com should have >=3 verified rankings, got {len(prompts)}"
 
-        # 4) Contextual relevance: every ranking_prompt.topic matches a top_topic
-        top_topics = [t.get("topic", "").strip().lower()
-                      for t in report.get("top_topics", []) if isinstance(t, dict) and t.get("topic")]
+        # Each citation_source entry has all required fields, no self-reference
+        for c in cites:
+            for k in ("source", "url", "title", "snippet", "query", "position"):
+                assert k in c, f"citation_source missing {k}: {c}"
+            # source must not be the target domain itself
+            assert "stripe.com" not in (c["source"] or "").lower() or c["source"] != "stripe.com"
+
+        # Every ranking prompt: verified=True and has integer google_rank in 1..10
+        for p in prompts:
+            assert p.get("verified") is True, f"prompt not verified: {p}"
+            gr = p.get("google_rank")
+            assert isinstance(gr, int) and 1 <= gr <= 10, f"invalid google_rank: {p}"
+            # url is on the target domain (matches _same_domain semantics)
+            u = (p.get("url") or "").lower()
+            assert "stripe.com" in u, f"ranking_prompts[i].url should be on stripe.com: {u}"
+
+        # Every ranking prompt topic must map to a top_topic (strict topic tie)
+        top_topics = [t.strip().lower() for t in report.get("top_topics", []) if isinstance(t, str) and t.strip()]
         assert top_topics, "top_topics missing/empty"
 
         def matches(pt: str) -> bool:
@@ -312,26 +345,62 @@ class TestDomainAsyncJob:
             return bool(pt) and any(pt == tt or pt in tt or tt in pt for tt in top_topics)
 
         off_topic = [p for p in prompts if not matches(p.get("topic", ""))]
-        assert len(off_topic) == 0, (
-            f"{len(off_topic)}/{len(prompts)} ranking_prompts are off-topic. "
-            f"Example: {off_topic[0] if off_topic else None}. top_topics={top_topics}"
-        )
+        assert not off_topic, f"{len(off_topic)} ranking_prompts off-topic. eg {off_topic[0] if off_topic else None} vs {top_topics}"
 
-        # 5) domain list excludes processing (this one is done, should appear)
-        rl = auth_session.get(f"{API}/domain", timeout=15)
-        assert rl.status_code == 200
-        assert any(x.get("id") == job_id for x in rl.json())
+        # Metrics must reflect counts (no fabricated DA/backlinks/traffic anymore)
+        m = report.get("metrics") or {}
+        assert m.get("verified_citations") == len(cites)
+        assert m.get("verified_rankings") == len(prompts)
+        for legacy in ("domain_authority", "backlinks", "traffic"):
+            assert legacy not in m, f"legacy fabricated metric {legacy} should not be present: {m}"
 
-    def test_domain_post_returns_processing_fast(self, auth_session):
-        """POST alone (no polling) must return within a couple seconds."""
-        t0 = time.time()
-        r = auth_session.post(f"{API}/domain/analyze", json={"domain": "stripe.com"}, timeout=5)
-        elapsed = time.time() - t0
+    def test_citetail_strict_no_hallucination(self, auth_session):
+        """Obscure domain: strict mode returns few/zero citations and zero rankings.
+        Big sites like en.wikipedia.org must NOT be listed unless they truly appear."""
+        r = auth_session.post(f"{API}/domain/analyze", json={"domain": "citetail.com"}, timeout=10)
         assert r.status_code == 200
-        d = r.json()
-        assert d.get("status") == "processing"
-        assert elapsed < 3.0, f"POST should be near-instant, took {elapsed:.2f}s"
-        assert "id" in d
+        job_id = r.json()["id"]
+        report = _poll_domain(auth_session, job_id, deadline_s=180)
+
+        cites = report.get("citation_sources", [])
+        prompts = report.get("ranking_prompts", [])
+        # Strict acceptance: few/zero. Not a bug.
+        assert isinstance(cites, list) and len(cites) <= 10, f"strict mode: expected <=10 citations for citetail.com, got {len(cites)}"
+        # Not enforcing zero (some incidental match is OK), but assert small set
+        # Ranking prompts should be zero or very few (self-test showed 0)
+        assert isinstance(prompts, list) and len(prompts) <= 3, f"strict mode: expected <=3 rankings for citetail.com, got {len(prompts)}"
+
+        # Every citation must contain the brand name or domain literal in title+snippet+url
+        # (otherwise it's a fabricated 'big site' with no real link to the brand)
+        brand_key = "citetail"
+        for c in cites:
+            blob = f"{c.get('title','')} {c.get('snippet','')} {c.get('url','')}".lower()
+            assert brand_key in blob or "citetail.com" in blob, (
+                f"hallucinated citation (no brand link): {c}"
+            )
+
+        # Engines must still include Claude
+        assert "Claude" in (report.get("engines_checked") or []), report.get("engines_checked")
+
+    def test_notion_or_stripe_citation_sources_are_real_domains(self, auth_session):
+        """Spot-check that returned citation source domains are plausible (registrable
+        domain, not internal/local, not equal to target)."""
+        r = auth_session.post(f"{API}/domain/analyze", json={"domain": "notion.so"}, timeout=10)
+        assert r.status_code == 200
+        job_id = r.json()["id"]
+        report = _poll_domain(auth_session, job_id, deadline_s=180)
+
+        cites = report.get("citation_sources", [])
+        assert len(cites) >= 5, f"notion.so should surface >=5 real citations, got {len(cites)}"
+
+        bad = []
+        for c in cites:
+            src = (c.get("source") or "").lower()
+            url = (c.get("url") or "").lower()
+            # Well-formed registrable domain: has a dot, not localhost/private
+            if not src or "." not in src or src.endswith(".local") or src == "notion.so" or not url.startswith("http"):
+                bad.append(c)
+        assert not bad, f"{len(bad)} malformed citation sources: {bad[:2]}"
 
 
 # ---------- URL analysis + JS scraper fallback (iteration 2) ----------
