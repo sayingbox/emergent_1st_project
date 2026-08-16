@@ -21,7 +21,7 @@
   "backend_issues": {
     "critical": [],
     "minor": [
-      {"endpoint": "TestRememberMe::test_remember_true_15_day_cookie (via preview URL under pytest-xdist)", "issue": "One transient ConnectTimeout to https://llm-domain-metrics.preview.emergentagent.com observed during the parallel full-suite run; the same test passed immediately on retry (3/3 green). Not a product bug — likely brief ingress hiccup. Consider adding retry-on-network-error at the session level in backend_test.py if the flakiness recurs."}
+      {"endpoint": "TestRememberMe::test_remember_true_15_day_cookie (via preview URL under pytest-xdist)", "issue": "One transient ConnectTimeout to https://github-deploy-84.preview.emergentagent.com observed during the parallel full-suite run; the same test passed immediately on retry (3/3 green). Not a product bug — likely brief ingress hiccup. Consider adding retry-on-network-error at the session level in backend_test.py if the flakiness recurs."}
     ]
   },
   "frontend_issues": {

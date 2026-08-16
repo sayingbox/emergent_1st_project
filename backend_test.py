@@ -11,7 +11,7 @@ import sys
 from typing import Dict, Any, Optional
 
 # Base URL from frontend/.env
-BASE_URL = "https://723c8d12-aee4-437d-9f54-7424bd701fd5.preview.emergentagent.com/api"
+BASE_URL = "https://github-deploy-84.preview.emergentagent.com/api"
 
 # Test credentials from /app/memory/test_credentials.md
 TEST_EMAIL = "admin@geo.com"
