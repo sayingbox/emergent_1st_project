@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Gauge } from "lucide-react";
 import { toast } from "sonner";
 
 export default function Auth() {
@@ -29,21 +28,33 @@ export default function Auth() {
 
   return (
     <div className="min-h-screen grid lg:grid-cols-2">
-      <div className="hidden lg:block relative bg-black">
-        <img src="https://images.unsplash.com/photo-1454117096348-e4abbeba002c?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2Njd8MHwxfHNlYXJjaHwxfHxtaW5pbWFsJTIwYWJzdHJhY3QlMjBnZW9tZXRyaWMlMjB3aGl0ZXxlbnwwfHx8fDE3ODYzMDQyMzJ8MA&ixlib=rb-4.1.0&q=85"
-          alt="abstract" className="absolute inset-0 w-full h-full object-cover opacity-80" />
-        <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-black/10" />
-        <div className="absolute bottom-0 p-12 text-white">
+      <div className="hidden lg:flex flex-col justify-between relative overflow-hidden bg-[#0B0B0F] p-12">
+        <div className="absolute -top-32 -left-24 w-[520px] h-[520px] rounded-full opacity-60 blur-3xl"
+          style={{ background: "radial-gradient(circle, rgba(24,192,144,0.45) 0%, rgba(24,192,144,0) 70%)" }} />
+        <div className="absolute bottom-0 right-0 w-[420px] h-[420px] rounded-full opacity-40 blur-3xl"
+          style={{ background: "radial-gradient(circle, rgba(24,192,144,0.35) 0%, rgba(24,192,144,0) 70%)" }} />
+        <div className="relative flex items-center gap-2.5">
+          <img src="/logo.png" alt="Citetail logo" className="w-10 h-10 object-contain" />
+          <span className="font-head font-extrabold text-2xl tracking-tight text-white">Cite<span className="text-[#18C090]">tail</span></span>
+        </div>
+        <div className="relative text-white">
           <h2 className="font-head text-4xl font-extrabold tracking-tight leading-tight">Rank in the age of<br/>AI answers.</h2>
-          <p className="text-white/70 mt-4 max-w-md text-base">Score any page for Generative & Answer Engine Optimization. See exactly how ChatGPT, Perplexity and Google AI would cite you — and fix what they can't.</p>
+          <p className="text-white/60 mt-4 max-w-md text-base">Score any page for Generative &amp; Answer Engine Optimization. See exactly how ChatGPT, Perplexity, Claude and Gemini would cite you — and fix what they can&apos;t.</p>
+          <div className="flex items-center gap-6 mt-8">
+            {["Crawl-first analysis", "Verified citations", "Live AI rankings"].map((t) => (
+              <div key={t} className="flex items-center gap-2 text-sm text-white/70">
+                <span className="w-1.5 h-1.5 rounded-full bg-[#18C090]" /> {t}
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 
       <div className="flex items-center justify-center p-6 sm:p-12">
         <div className="w-full max-w-sm">
-          <div className="flex items-center gap-2 mb-8">
-            <div className="w-9 h-9 bg-black text-white grid place-items-center rounded-md"><Gauge size={20} /></div>
-            <span className="font-head font-extrabold text-xl tracking-tight">GEO<span className="text-[#002FA7]">rank</span></span>
+          <div className="flex items-center gap-2.5 mb-8 lg:hidden">
+            <img src="/logo.png" alt="Citetail logo" className="w-9 h-9 object-contain" />
+            <span className="font-head font-extrabold text-xl tracking-tight">Cite<span className="text-[#18C090]">tail</span></span>
           </div>
           <h1 className="font-head text-3xl font-extrabold tracking-tight">{mode === "login" ? "Sign in" : "Create account"}</h1>
           <p className="text-muted-foreground text-sm mt-2 mb-8">{mode === "login" ? "Access your analyses and score history." : "Start scoring content in seconds."}</p>
@@ -69,14 +80,14 @@ export default function Auth() {
                 <span className="text-sm text-muted-foreground">Keep me signed in for 15 days</span>
               </label>
             )}
-            <Button type="submit" disabled={loading} className="w-full bg-black text-white hover:bg-gray-800" data-testid="auth-submit">
+            <Button type="submit" disabled={loading} className="w-full bg-[#18C090] text-white hover:bg-[#129E75] transition-colors" data-testid="auth-submit">
               {loading ? "Please wait…" : mode === "login" ? "Sign in" : "Create account"}
             </Button>
           </form>
 
           <p className="text-sm text-muted-foreground mt-6">
             {mode === "login" ? "New here? " : "Already have an account? "}
-            <button className="font-semibold text-black underline underline-offset-4" data-testid="toggle-mode"
+            <button className="font-semibold text-[#129E75] underline underline-offset-4" data-testid="toggle-mode"
               onClick={() => setMode(mode === "login" ? "register" : "login")}>
               {mode === "login" ? "Create an account" : "Sign in"}
             </button>

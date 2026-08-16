@@ -85,7 +85,7 @@ export default function AnalysisDetail() {
 
         {/* Direct answer */}
         <Card className="lg:col-span-8 p-8 rounded-lg border-border/60">
-          <div className="flex items-center gap-2 mb-3"><Quote size={16} className="text-[#002FA7]" /><span className="text-xs tracking-[0.2em] uppercase font-bold text-muted-foreground">Suggested direct answer</span></div>
+          <div className="flex items-center gap-2 mb-3"><Quote size={16} className="text-[#18C090]" /><span className="text-xs tracking-[0.2em] uppercase font-bold text-muted-foreground">Suggested direct answer</span></div>
           <p className="font-head text-2xl font-bold leading-snug" data-testid="summary-answer">{a.summary_answer}</p>
           <p className="text-sm text-muted-foreground mt-4">Place a 40–60 word direct answer like this immediately after your H1 so engines can quote it verbatim.</p>
         </Card>
@@ -136,7 +136,7 @@ export default function AnalysisDetail() {
           <div className="space-y-3" data-testid="recommendations-list">
             {(a.recommendations || []).map((r, i) => (
               <Card key={i} className="p-5 rounded-lg border-border/60 flex items-start gap-4">
-                <ChevronRight size={18} className="mt-0.5 text-[#002FA7] shrink-0" />
+                <ChevronRight size={18} className="mt-0.5 text-[#18C090] shrink-0" />
                 <div className="flex-1">
                   <div className="flex items-center gap-2 mb-1">
                     <Badge className={`${priColor[r.priority] || priColor.low} border rounded-md capitalize`}>{r.priority}</Badge>
@@ -183,7 +183,7 @@ export default function AnalysisDetail() {
               </div>
               <p className="text-sm leading-relaxed">{s.simulated_answer}</p>
               {s.cited_snippets?.length > 0 && (
-                <div className="mt-4 border-l-2 border-[#002FA7] pl-3 space-y-1">
+                <div className="mt-4 border-l-2 border-[#18C090] pl-3 space-y-1">
                   {s.cited_snippets.map((c, j) => <p key={j} className="text-xs text-muted-foreground italic">"{c}"</p>)}
                 </div>
               )}

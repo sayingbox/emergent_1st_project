@@ -84,3 +84,12 @@ User spec: Domain Analysis must follow a strict crawl-first workflow.
 - **PDF export**: new `/app/frontend/src/lib/pdf.js` (jsPDF, text-based/selectable, branded dark header). `exportContentReport(a)` and `exportDomainReport(r)` build complete reports (all sections, not just the active tab / not truncated by "view more"). Buttons: `export-pdf-btn` on AnalysisDetail, `export-domain-pdf-btn` on DomainAnalysis score card.
 - **Score colour tiers** (`ScoreGauge.js` colorFor, used app-wide via `scoreColor`): ≥80 strong green #15803D, ≥70 light green #22C55E, ≥60 light yellow #EAB308, ≥50 amber #D97706, <50 red #DC2626.
 - Verified via screenshots: both Export PDF buttons fire ("PDF exported"), no console/jsPDF errors; colours render correctly (62→light-yellow, 72→light-green, 55→amber, 40→red).
+
+## 2026-06 Rebrand to Citetail + emerald redesign
+- **Logo**: user's emerald double-chevron logo saved to `/app/frontend/public/logo.png` (+ `src/assets/logo.png`); used in Sidebar (desktop + mobile), Auth screen, and as favicon/apple-touch-icon. Page title → "Citetail — AI Answer Visibility".
+- **Brand colour**: replaced royal blue `#002FA7` (and sidebar `#5b8bff`) app-wide with emerald `#18C090` (hover `#129E75`, tint `rgba(24,192,144,0.1)`). Functional 5-tier score colours untouched.
+- **Design blueprint**: `/app/design_guidelines.json` (from design_agent).
+- **Sidebar**: logo lockup, emerald active state (left border + tint), fixed mobile wordmark ("GEOrank"→Citetail), emerald avatar.
+- **Auth**: premium split screen — dark `#0B0B0F` left panel with emerald radial glow, logo, feature bullets; emerald primary button.
+- **Overview dashboard** (`Overview.js`): emerald hero band with glow + "Analyze a domain" CTA, framer-motion staggered entrance, stat cards with emerald icon chips + tier-coloured values, emerald recharts area (custom tooltip), clean activity list, emerald tools grid.
+- Verified via screenshots (login + dashboard); no console errors. Frontend-only visual change.

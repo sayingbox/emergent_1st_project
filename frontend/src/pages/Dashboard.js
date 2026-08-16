@@ -82,7 +82,7 @@ export default function Dashboard() {
     <div className="space-y-10">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <p className="text-xs tracking-[0.2em] uppercase font-bold text-[#002FA7]">Answer Engine (AEO)</p>
+          <p className="text-xs tracking-[0.2em] uppercase font-bold text-[#18C090]">Answer Engine (AEO)</p>
           <h1 className="font-head text-4xl sm:text-5xl font-extrabold tracking-tight mt-2">Content Optimizer</h1>
           <p className="text-muted-foreground mt-3 max-w-2xl">Paste a URL or raw content. We audit clarity, structure, E-E-A-T, schema and question coverage — then tell you exactly how to get cited.</p>
         </div>

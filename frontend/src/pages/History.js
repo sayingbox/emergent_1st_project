@@ -13,7 +13,7 @@ export default function History() {
   return (
     <div className="space-y-8">
       <div>
-        <p className="text-xs tracking-[0.2em] uppercase font-bold text-[#002FA7]">Track progress</p>
+        <p className="text-xs tracking-[0.2em] uppercase font-bold text-[#18C090]">Track progress</p>
         <h1 className="font-head text-4xl font-extrabold tracking-tight mt-2">Score history</h1>
         <p className="text-muted-foreground mt-3">Re-run audits on the same URL after edits to see your GEO score climb.</p>
       </div>
@@ -49,15 +49,15 @@ export default function History() {
                     <AreaChart data={data} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
                       <defs>
                         <linearGradient id={`g${i}`} x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="#002FA7" stopOpacity={0.25} />
-                          <stop offset="100%" stopColor="#002FA7" stopOpacity={0} />
+                          <stop offset="0%" stopColor="#18C090" stopOpacity={0.25} />
+                          <stop offset="100%" stopColor="#18C090" stopOpacity={0} />
                         </linearGradient>
                       </defs>
                       <CartesianGrid strokeDasharray="3 3" stroke="#eee" vertical={false} />
                       <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="#9ca3af" />
                       <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} stroke="#9ca3af" />
                       <Tooltip />
-                      <Area type="monotone" dataKey="score" stroke="#002FA7" strokeWidth={2} fill={`url(#g${i})`} />
+                      <Area type="monotone" dataKey="score" stroke="#18C090" strokeWidth={2} fill={`url(#g${i})`} />
                     </AreaChart>
                   </ResponsiveContainer>
                 </div>

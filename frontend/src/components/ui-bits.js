@@ -4,7 +4,7 @@ export function PageHeader({ overline, title, subtitle, action }) {
   return (
     <div className="flex items-start justify-between gap-4 mb-8">
       <div>
-        {overline && <p className="text-xs tracking-[0.2em] uppercase font-bold text-[#002FA7]">{overline}</p>}
+        {overline && <p className="text-xs tracking-[0.2em] uppercase font-bold text-[#18C090]">{overline}</p>}
         <h1 className="font-head text-3xl sm:text-4xl font-extrabold tracking-tight mt-2">{title}</h1>
         {subtitle && <p className="text-muted-foreground mt-2 max-w-2xl text-sm">{subtitle}</p>}
       </div>
