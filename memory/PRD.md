@@ -71,3 +71,11 @@ User spec: Domain Analysis must follow a strict crawl-first workflow.
 - Frontend `DomainAnalysis.js`: new "Discovered business & services" (+crawled page links), "AI Search ranking" per-topic, "Live" verified badges on citations, richer competitor cards.
 - Files: `/app/backend/server.py` (crawl_business, verify_live_urls, DOMAIN_SYSTEM, domain_prompt, _run_domain_analysis), `/app/frontend/src/pages/DomainAnalysis.js`.
 - Verified end-to-end on foiwe.com: crawled 4 real pages, 9 services, 9 topics, 21 HTTP-verified live citations, 25 topic-based prompts, 9 topic-matched competitors. ~70s run.
+
+## 2026-06 Content Optimizer: Cloudflare timeout + accuracy fixes
+- **Bug**: POST /api/analyses ran fetch+Chromium+LLM synchronously (45-90s) → exceeded ~60s ingress/Cloudflare timeout → "origin returned invalid/incomplete response" (520).
+- **Fix (async job)**: POST inserts a `status:'processing'` doc, returns `{id,status}` instantly, spawns `_run_analysis` background task; frontend `Dashboard.js` polls GET /api/analyses/{id} every 3s (cap 180s), navigates on 'done', toasts on 'error'.
+- **Accuracy — 404 rejection**: `fetch_html` now raises on HTTP 404/410 so bad URLs become `status:'error'` (not a scored 404 page). Verified: hubspot 404 → error; wikipedia Content_marketing → done, 3610 words, score 62.
+- **Re-run freshness**: `_run_analysis` uses a unique LLM session `analyze-{job_id}` (and domain uses `domain-{job_id}`) so re-analyzing improved content yields a NEW report, never cached context. Each run = a new independent doc.
+- **Resilience**: list_analyses/history/dashboard exclude processing (and errored) docs; no 500s.
+- Verified by testing agent iteration_6.json: backend 6/6, frontend 2/2, no issues.

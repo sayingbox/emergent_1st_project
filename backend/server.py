@@ -174,14 +174,19 @@ async def render_html(url: str) -> str:
 async def fetch_html(url: str) -> str:
     """Fetch a URL; fall back to a headless browser for JS-heavy / thin pages."""
     static_html = ""
+    status = None
     try:
         r = requests.get(url, headers={"User-Agent": UA}, timeout=15)
-        r.raise_for_status()
+        status = r.status_code
         static_html = r.text
     except Exception as e:
         logger.warning(f"static fetch failed for {url}: {e}")
 
-    static_words = _visible_word_count(static_html) if static_html else 0
+    # Hard-fail on definitively missing pages so we never analyze a 404/gone page as if it were content
+    if status in (404, 410):
+        raise RuntimeError(f"The page returned HTTP {status} (page not found). Check the URL is correct and publicly accessible.")
+
+    static_words = _visible_word_count(static_html) if (static_html and status and status < 400) else 0
     if static_words >= 250:
         return static_html
 
@@ -194,9 +199,9 @@ async def fetch_html(url: str) -> str:
     except Exception as e:
         logger.warning(f"render fallback failed for {url}: {e}")
 
-    if static_html:
+    if static_html and status and status < 400:
         return static_html
-    raise RuntimeError("Could not fetch page content")
+    raise RuntimeError("Could not fetch page content — the URL may be unreachable or blocking automated access.")
 
 
 def fetch_url(url: str) -> str:
@@ -379,10 +384,7 @@ def summary_of(doc: dict) -> dict:
             "created_at": doc["created_at"]}
 
 
-@api_router.post("/analyses")
-async def create_analysis(body: AnalyzeInput, user: dict = Depends(get_current_user)):
-    if not body.content.strip():
-        raise HTTPException(status_code=400, detail="Content is required")
+async def _run_analysis(job_id: str, user_id: str, body: AnalyzeInput):
     try:
         if body.input_type == "url":
             html = await fetch_html(body.content.strip())
@@ -390,46 +392,65 @@ async def create_analysis(body: AnalyzeInput, user: dict = Depends(get_current_u
         else:
             norm = normalize_content(body.input_type, body.content)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Could not fetch/parse content: {e}")
+        await db.analyses.update_one({"id": job_id}, {"$set": {"status": "error", "error": f"Could not fetch/parse content: {e}"}})
+        return
+    try:
+        # Unique session per job => no carryover; a re-run on improved content yields a fresh report
+        analysis = await llm_json(ANALYSIS_SYSTEM, analysis_prompt(norm, body.target_query), f"analyze-{job_id}")
+        result = {
+            "source_url": norm.get("source_url"),
+            "title": norm["title"],
+            "word_count": norm["word_count"],
+            "normalized": {k: norm[k] for k in ["title", "headings", "meta_tags", "existing_schema", "author", "has_faq", "word_count", "source_url"]},
+            "body_preview": norm["body_text"][:3000],
+            "overall_score": int(analysis.get("overall_score", 0)),
+            "summary_answer": analysis.get("summary_answer", ""),
+            "dimensions": analysis.get("dimensions", []),
+            "recommendations": analysis.get("recommendations", []),
+            "detected_schema_types": analysis.get("detected_schema_types", []),
+            "jsonld": analysis.get("jsonld", []),
+        }
+        await db.analyses.update_one({"id": job_id}, {"$set": {**result, "status": "done"}})
+    except Exception as e:
+        logger.exception(f"analysis failed for job {job_id}")
+        await db.analyses.update_one({"id": job_id}, {"$set": {"status": "error", "error": str(e)}})
 
-    analysis = await llm_json(ANALYSIS_SYSTEM, analysis_prompt(norm, body.target_query), f"analyze-{user['id']}")
 
+@api_router.post("/analyses")
+async def create_analysis(body: AnalyzeInput, user: dict = Depends(get_current_user)):
+    if not body.content.strip():
+        raise HTTPException(status_code=400, detail="Content is required")
+    job_id = secrets.token_hex(12)
     doc = {
-        "id": secrets.token_hex(12),
+        "id": job_id,
         "user_id": user["id"],
         "input_type": body.input_type,
-        "source_url": norm.get("source_url"),
+        "source_url": body.content.strip() if body.input_type == "url" else None,
         "target_query": body.target_query,
-        "title": norm["title"],
-        "word_count": norm["word_count"],
-        "normalized": {k: norm[k] for k in ["title", "headings", "meta_tags", "existing_schema", "author", "has_faq", "word_count", "source_url"]},
-        "body_preview": norm["body_text"][:3000],
-        "overall_score": int(analysis.get("overall_score", 0)),
-        "summary_answer": analysis.get("summary_answer", ""),
-        "dimensions": analysis.get("dimensions", []),
-        "recommendations": analysis.get("recommendations", []),
-        "detected_schema_types": analysis.get("detected_schema_types", []),
-        "jsonld": analysis.get("jsonld", []),
+        "title": body.content.strip() if body.input_type == "url" else "Pasted content",
+        "status": "processing",
         "simulations": [],
         "question_gaps": [],
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.analyses.insert_one(doc)
-    doc.pop("_id", None)
-    return doc
+    asyncio.create_task(_run_analysis(job_id, user["id"], body))
+    return {"id": job_id, "status": "processing"}
 
 
 @api_router.get("/analyses")
 async def list_analyses(user: dict = Depends(get_current_user)):
-    docs = await db.analyses.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(500)
-    return [summary_of(d) for d in docs]
+    docs = await db.analyses.find({"user_id": user["id"], "status": {"$ne": "processing"}}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return [summary_of(d) for d in docs if d.get("status", "done") == "done"]
 
 
 @api_router.get("/analyses/history")
 async def history(user: dict = Depends(get_current_user)):
-    docs = await db.analyses.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", 1).to_list(500)
+    docs = await db.analyses.find({"user_id": user["id"], "status": {"$ne": "processing"}}, {"_id": 0}).sort("created_at", 1).to_list(500)
     groups = {}
     for d in docs:
+        if d.get("status", "done") != "done":
+            continue
         key = d.get("source_url") or d["title"]
         groups.setdefault(key, []).append({"id": d["id"], "score": d["overall_score"], "created_at": d["created_at"], "title": d["title"]})
     return [{"key": k, "points": v} for k, v in groups.items() if len(v) >= 1]
@@ -706,7 +727,7 @@ async def _run_domain_analysis(job_id: str, user_id: str, domain: str):
         crawl = await crawl_business(domain)
 
         # 2-6) LLM analysis grounded in the crawl
-        res = await llm_json(DOMAIN_SYSTEM, domain_prompt(domain, crawl), f"domain-{user_id}", max_tokens=12000)
+        res = await llm_json(DOMAIN_SYSTEM, domain_prompt(domain, crawl), f"domain-{job_id}", max_tokens=12000)
 
         # Normalise + defensively filter
         top_topics_raw = res.get("top_topics", []) or []
@@ -973,8 +994,8 @@ async def reddit_list(user: dict = Depends(get_current_user)):
 @api_router.get("/dashboard")
 async def dashboard(user: dict = Depends(get_current_user)):
     uid = user["id"]
-    analyses = await db.analyses.find({"user_id": uid}, {"_id": 0, "id": 1, "title": 1, "source_url": 1, "overall_score": 1, "created_at": 1}).sort("created_at", -1).to_list(500)
-    domains = await db.domains.find({"user_id": uid}, {"_id": 0, "id": 1, "domain": 1, "ai_readiness_score": 1, "created_at": 1}).sort("created_at", -1).to_list(200)
+    analyses = await db.analyses.find({"user_id": uid, "status": {"$in": ["done", None]}, "overall_score": {"$exists": True}}, {"_id": 0, "id": 1, "title": 1, "source_url": 1, "overall_score": 1, "created_at": 1}).sort("created_at", -1).to_list(500)
+    domains = await db.domains.find({"user_id": uid, "status": {"$in": ["done", None]}}, {"_id": 0, "id": 1, "domain": 1, "ai_readiness_score": 1, "created_at": 1}).sort("created_at", -1).to_list(200)
     vis = await db.visibility.find({"user_id": uid}, {"_id": 0, "id": 1, "brand": 1, "visibility_score": 1, "created_at": 1}).sort("created_at", -1).to_list(200)
     cites = await db.citations.count_documents({"user_id": uid})
     reddits = await db.reddit.count_documents({"user_id": uid})
@@ -985,7 +1006,7 @@ async def dashboard(user: dict = Depends(get_current_user)):
 
     activity = []
     for a in analyses[:6]:
-        activity.append({"type": "AEO Content", "label": a["title"], "score": a["overall_score"], "created_at": a["created_at"], "link": f"/app/analysis/{a['id']}"})
+        activity.append({"type": "AEO Content", "label": a["title"], "score": a.get("overall_score", 0), "created_at": a["created_at"], "link": f"/app/analysis/{a['id']}"})
     for d in domains[:4]:
         activity.append({"type": "Domain", "label": d["domain"], "score": d.get("ai_readiness_score", 0), "created_at": d["created_at"], "link": "/app/domain"})
     for v in vis[:4]:
@@ -996,11 +1017,11 @@ async def dashboard(user: dict = Depends(get_current_user)):
         "stats": {
             "analyses": len(analyses), "domains": len(domains), "visibility_runs": len(vis),
             "citation_runs": cites, "reddit_runs": reddits,
-            "avg_content_score": avg([a["overall_score"] for a in analyses]),
+            "avg_content_score": avg([a.get("overall_score") for a in analyses]),
             "avg_domain_score": avg([d.get("ai_readiness_score") for d in domains]),
             "avg_visibility": avg([v.get("visibility_score") for v in vis]),
         },
-        "content_trend": [{"date": a["created_at"], "score": a["overall_score"], "label": a["title"]} for a in list(reversed(analyses))[-12:]],
+        "content_trend": [{"date": a["created_at"], "score": a.get("overall_score", 0), "label": a["title"]} for a in list(reversed(analyses))[-12:]],
         "visibility_trend": [{"date": v["created_at"], "score": v.get("visibility_score", 0), "label": v["brand"]} for v in list(reversed(vis))[-12:]],
         "activity": activity[:10],
     }

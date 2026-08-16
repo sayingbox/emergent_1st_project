@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { http, formatApiErrorDetail } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -20,11 +20,15 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState([]);
   const navigate = useNavigate();
+  const pollRef = useRef(null);
 
   const load = async () => {
     try { const { data } = await http.get("/analyses"); setItems(data); } catch {}
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    return () => { pollRef.current && clearInterval(pollRef.current); };
+  }, []);
 
   const analyze = async () => {
     const content = tab === "url" ? url.trim() : text.trim();
@@ -32,11 +36,39 @@ export default function Dashboard() {
     setLoading(true);
     try {
       const { data } = await http.post("/analyses", { input_type: tab, content, target_query: query || null });
-      toast.success("Analysis complete");
-      navigate(`/app/analysis/${data.id}`);
+      const jobId = data.id;
+      pollRef.current && clearInterval(pollRef.current);
+      let elapsed = 0;
+      pollRef.current = setInterval(async () => {
+        elapsed += 3;
+        if (elapsed > 180) {
+          clearInterval(pollRef.current);
+          setLoading(false);
+          toast.error("Analysis is taking too long — please try again");
+          return;
+        }
+        try {
+          const { data: job } = await http.get(`/analyses/${jobId}`);
+          if (job.status === "done") {
+            clearInterval(pollRef.current);
+            setLoading(false);
+            toast.success("Analysis complete");
+            navigate(`/app/analysis/${jobId}`);
+          } else if (job.status === "error") {
+            clearInterval(pollRef.current);
+            setLoading(false);
+            toast.error(job.error ? String(job.error).slice(0, 160) : "Analysis failed — please try again");
+          }
+        } catch {
+          clearInterval(pollRef.current);
+          setLoading(false);
+          toast.error("Lost connection while analyzing");
+        }
+      }, 3000);
     } catch (e) {
+      setLoading(false);
       toast.error(formatApiErrorDetail(e.response?.data?.detail) || "Analysis failed");
-    } finally { setLoading(false); }
+    }
   };
 
   const del = async (id, e) => {

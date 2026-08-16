@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="6" time="265.129" timestamp="2026-08-16T10:15:26.978900+00:00" hostname="agent-env-723c8d12-aee4-437d-9f54-7424bd701fd5"><testcase classname="tests.test_optimizer_async.TestOptimizerAsync" name="test_post_url_returns_processing_fast" time="0.913" /><testcase classname="tests.test_optimizer_async.TestOptimizerAsync" name="test_valid_url_reaches_done_wikipedia" time="69.937" /><testcase classname="tests.test_optimizer_async.TestOptimizerAsync" name="test_404_url_ends_in_error" time="4.103" /><testcase classname="tests.test_optimizer_async.TestOptimizerAsync" name="test_text_input_reaches_done" time="48.779" /><testcase classname="tests.test_optimizer_async.TestOptimizerAsync" name="test_rerun_same_url_produces_fresh_independent_reports" time="138.063" /><testcase classname="tests.test_optimizer_async.TestOptimizerAsync" name="test_list_and_history_filter_processing_and_dashboard_ok" time="1.028"><failure message="KeyError: 'id'">backend/tests/test_optimizer_async.py:160: in test_list_and_history_filter_processing_and_dashboard_ok
+    assert not any(a["id"] == pending_id for a in hist.json()), \
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/tests/test_optimizer_async.py:160: in &lt;genexpr&gt;
+    assert not any(a["id"] == pending_id for a in hist.json()), \
+                   ^^^^^^^
+E   KeyError: 'id'</failure></testcase></testsuite></testsuites>
