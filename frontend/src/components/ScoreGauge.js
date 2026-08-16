@@ -1,6 +1,11 @@
 import { motion } from "framer-motion";
 
-const colorFor = (s) => (s >= 75 ? "#16A34A" : s >= 50 ? "#D97706" : "#DC2626");
+const colorFor = (s) =>
+  s >= 80 ? "#15803D" :   // strong green
+  s >= 70 ? "#22C55E" :   // light green
+  s >= 60 ? "#EAB308" :   // light yellow
+  s >= 50 ? "#D97706" :   // yellow / amber
+            "#DC2626";    // red
 
 export function ScoreGauge({ score = 0, size = 190, stroke = 14, label = "GEO SCORE" }) {
   const r = (size - stroke) / 2;

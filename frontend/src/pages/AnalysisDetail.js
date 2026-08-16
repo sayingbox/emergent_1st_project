@@ -9,7 +9,8 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import { ArrowLeft, Check, X, Copy, Download, Sparkles, Loader2, Quote, HelpCircle, ChevronRight } from "lucide-react";
+import { exportContentReport } from "@/lib/pdf";
+import { ArrowLeft, Check, X, Copy, Download, Sparkles, Loader2, Quote, HelpCircle, ChevronRight, FileDown } from "lucide-react";
 
 const priColor = { high: "bg-red-100 text-red-700 border-red-200", medium: "bg-amber-100 text-amber-700 border-amber-200", low: "bg-gray-100 text-gray-600 border-gray-200" };
 
@@ -61,7 +62,13 @@ export default function AnalysisDetail() {
 
   return (
     <div className="space-y-8">
-      <Link to="/app/optimizer" className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-black" data-testid="back-link"><ArrowLeft size={16} /> Back</Link>
+      <div className="flex items-center justify-between gap-3">
+        <Link to="/app/optimizer" className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-black" data-testid="back-link"><ArrowLeft size={16} /> Back</Link>
+        <Button onClick={() => { try { exportContentReport(a); toast.success("PDF exported"); } catch { toast.error("Could not export PDF"); } }}
+          size="sm" variant="outline" data-testid="export-pdf-btn">
+          <FileDown size={15} className="mr-2" /> Export PDF
+        </Button>
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Score + meta */}

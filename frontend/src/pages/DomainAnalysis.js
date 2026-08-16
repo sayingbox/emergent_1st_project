@@ -6,8 +6,9 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { PageHeader, EmptyState } from "@/components/ui-bits";
 import { ScoreGauge, scoreColor } from "@/components/ScoreGauge";
-import { Globe, Loader2, Sparkles, Zap, Users, Link2, Search, ExternalLink, BarChart3, ChevronDown, ChevronUp, Layers, ShieldCheck, CheckCircle2, XCircle, FileSearch } from "lucide-react";
+import { Globe, Loader2, Sparkles, Zap, Users, Link2, Search, ExternalLink, BarChart3, ChevronDown, ChevronUp, Layers, ShieldCheck, CheckCircle2, XCircle, FileSearch, FileDown } from "lucide-react";
 import { toast } from "sonner";
+import { exportDomainReport } from "@/lib/pdf";
 
 const priColor = { high: "bg-red-100 text-red-700 border-red-200", medium: "bg-amber-100 text-amber-700 border-amber-200", low: "bg-gray-100 text-gray-600 border-gray-200" };
 const posColor = { top: "bg-green-100 text-green-700 border-green-200", recommended: "bg-green-100 text-green-700 border-green-200", passing: "bg-amber-100 text-amber-700 border-amber-200" };
@@ -129,6 +130,10 @@ export default function DomainAnalysis() {
             <Badge className={`mt-3 rounded-md border ${r.known_by_ai ? "bg-green-100 text-green-700 border-green-200" : "bg-amber-100 text-amber-700 border-amber-200"}`}>
               {r.known_by_ai ? "Recognized by AI engines" : "Low AI recognition"}
             </Badge>
+            <Button onClick={() => { try { exportDomainReport(r); toast.success("PDF exported"); } catch { toast.error("Could not export PDF"); } }}
+              size="sm" variant="outline" className="mt-4" data-testid="export-domain-pdf-btn">
+              <FileDown size={15} className="mr-2" /> Export PDF
+            </Button>
           </Card>
 
           {/* SEO & authority metrics */}

@@ -79,3 +79,8 @@ User spec: Domain Analysis must follow a strict crawl-first workflow.
 - **Re-run freshness**: `_run_analysis` uses a unique LLM session `analyze-{job_id}` (and domain uses `domain-{job_id}`) so re-analyzing improved content yields a NEW report, never cached context. Each run = a new independent doc.
 - **Resilience**: list_analyses/history/dashboard exclude processing (and errored) docs; no 500s.
 - Verified by testing agent iteration_6.json: backend 6/6, frontend 2/2, no issues.
+
+## 2026-06 PDF export + 5-tier score colours
+- **PDF export**: new `/app/frontend/src/lib/pdf.js` (jsPDF, text-based/selectable, branded dark header). `exportContentReport(a)` and `exportDomainReport(r)` build complete reports (all sections, not just the active tab / not truncated by "view more"). Buttons: `export-pdf-btn` on AnalysisDetail, `export-domain-pdf-btn` on DomainAnalysis score card.
+- **Score colour tiers** (`ScoreGauge.js` colorFor, used app-wide via `scoreColor`): ≥80 strong green #15803D, ≥70 light green #22C55E, ≥60 light yellow #EAB308, ≥50 amber #D97706, <50 red #DC2626.
+- Verified via screenshots: both Export PDF buttons fire ("PDF exported"), no console/jsPDF errors; colours render correctly (62→light-yellow, 72→light-green, 55→amber, 40→red).
