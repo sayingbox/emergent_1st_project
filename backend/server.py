@@ -24,6 +24,7 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr, Field
 
 from emergentintegrations.llm.chat import LlmChat, UserMessage
+from urllib.parse import urlparse, urlunparse, urljoin
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -69,7 +70,7 @@ def get_jwt_secret() -> str:
     return os.environ["JWT_SECRET"]
 
 
-def create_access_token(user_id: str, email: str, minutes: int = 15) -> str:
+def create_access_token(user_id: str, email: str, minutes: int = 120) -> str:
     payload = {"sub": user_id, "email": email, "exp": datetime.now(timezone.utc) + timedelta(minutes=minutes), "type": "access"}
     return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
 
@@ -83,7 +84,8 @@ REMEMBER_DAYS = 15
 
 
 def set_auth_cookies(response: Response, access: str, refresh: str, remember: bool = False):
-    access_max = REMEMBER_DAYS * 86400 if remember else 900
+    # Default (non-remember) session lasts 2 hours; with "remember me" it lasts REMEMBER_DAYS (15) days.
+    access_max = REMEMBER_DAYS * 86400 if remember else 7200
     refresh_max = REMEMBER_DAYS * 86400 if remember else 604800
     response.set_cookie("access_token", access, httponly=True, secure=True, samesite="none", max_age=access_max, path="/")
     response.set_cookie("refresh_token", refresh, httponly=True, secure=True, samesite="none", max_age=refresh_max, path="/")
@@ -140,6 +142,26 @@ class SimulateInput(BaseModel):
 # ---------------- Content ingestion ----------------
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 
+# Headers sent on every outbound page fetch. Explicitly disable HTTP caching so a re-scan
+# after the user updates their site returns fresh content, not a stale CDN copy.
+NO_CACHE_HEADERS = {
+    "User-Agent": UA,
+    "Cache-Control": "no-cache, no-store, max-age=0, must-revalidate",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
+
+
+def _bust_cache_url(url: str) -> str:
+    """Append a random query parameter so upstream CDNs / edge caches must revalidate."""
+    try:
+        parsed = urlparse(url)
+        cb = f"_cb={int(datetime.now(timezone.utc).timestamp())}{secrets.token_hex(2)}"
+        new_query = f"{parsed.query}&{cb}" if parsed.query else cb
+        return urlunparse(parsed._replace(query=new_query))
+    except Exception:
+        return url
+
 
 def _visible_word_count(html: str) -> int:
     try:
@@ -158,13 +180,22 @@ async def render_html(url: str) -> str:
     if not exec_path and os.path.exists("/usr/local/bin/browser-use-chromium"):
         exec_path = "/usr/local/bin/browser-use-chromium"
     async with async_playwright() as p:
-        launch_kwargs = {"args": ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"]}
+        launch_kwargs = {"args": ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-application-cache"]}
         if exec_path:
             launch_kwargs["executable_path"] = exec_path
         browser = await p.chromium.launch(**launch_kwargs)
         try:
-            page = await browser.new_page(user_agent=UA)
-            await page.goto(url, wait_until="domcontentloaded", timeout=25000)
+            # Fresh incognito context + disabled HTTP cache => never serve a stale page on re-scan
+            context = await browser.new_context(user_agent=UA, bypass_csp=True, extra_http_headers={
+                "Cache-Control": "no-cache, no-store, max-age=0, must-revalidate",
+                "Pragma": "no-cache",
+            })
+            page = await context.new_page()
+            try:
+                await context.set_extra_http_headers({"Cache-Control": "no-cache, no-store", "Pragma": "no-cache"})
+            except Exception:
+                pass
+            await page.goto(_bust_cache_url(url), wait_until="domcontentloaded", timeout=25000)
             await page.wait_for_timeout(1500)
             return await page.content()
         finally:
@@ -172,11 +203,16 @@ async def render_html(url: str) -> str:
 
 
 async def fetch_html(url: str) -> str:
-    """Fetch a URL; fall back to a headless browser for JS-heavy / thin pages."""
+    """Fetch a URL; fall back to a headless browser for JS-heavy / thin pages.
+
+    Cache-busts every request (fresh query param + no-cache headers) so a re-scan
+    after the user updates their content never returns the previous copy.
+    """
     static_html = ""
     status = None
+    fetch_url = _bust_cache_url(url)
     try:
-        r = requests.get(url, headers={"User-Agent": UA}, timeout=15)
+        r = requests.get(fetch_url, headers=NO_CACHE_HEADERS, timeout=15)
         status = r.status_code
         static_html = r.text
     except Exception as e:
@@ -359,7 +395,8 @@ async def login(body: LoginInput, response: Response):
     if not user or not verify_password(body.password, user["password_hash"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     uid = str(user["_id"])
-    minutes = REMEMBER_DAYS * 1440 if body.remember else 15
+    # Non-remember sessions: 2 hours (matches cookie max-age). Remember-me: REMEMBER_DAYS (15 days).
+    minutes = REMEMBER_DAYS * 1440 if body.remember else 120
     days = REMEMBER_DAYS if body.remember else 7
     set_auth_cookies(response, create_access_token(uid, email, minutes=minutes), create_refresh_token(uid, days=days), remember=body.remember)
     return apply_entitlements({"id": uid, "email": email, "name": user.get("name", "User"), "role": user.get("role", "user")})
@@ -533,7 +570,7 @@ class RedditInput(BaseModel):
     topic: str
 
 
-from urllib.parse import urlparse, urljoin
+from urllib.parse import urlparse, urljoin  # noqa: F811 (re-import for local readability)
 
 
 ENGINES_CHECKED = ["ChatGPT", "Claude", "Perplexity", "Gemini"]

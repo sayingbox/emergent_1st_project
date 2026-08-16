@@ -1,5 +1,12 @@
 import { useEffect, useState } from "react";
+import { useSessionState } from "@/hooks/useSessionState";
 import { http, formatApiErrorDetail } from "@/lib/api";
+import {
+  startSingleShotJob,
+  subscribe as subscribeJob,
+  setResult as setJobResult,
+  getState as getJobState,
+} from "@/lib/jobRegistry";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,22 +16,37 @@ import { MessageSquare, Loader2, Sparkles, Users, TrendingUp } from "lucide-reac
 import { toast } from "sonner";
 
 const engColor = { high: "bg-green-100 text-green-700 border-green-200", medium: "bg-amber-100 text-amber-700 border-amber-200", low: "bg-gray-100 text-gray-600 border-gray-200" };
+const JOB_KEY = "reddit";
 
 export default function Reddit() {
-  const [topic, setTopic] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState(null);
+  const [topic, setTopic] = useSessionState("reddit:topic", "");
+  const initial = getJobState(JOB_KEY);
+  const [status, setStatus] = useState(initial.status || "idle");
+  const [result, setResult] = useState(initial.result || null);
   const [past, setPast] = useState([]);
+  const loading = status === "running";
 
   const load = () => http.get("/reddit").then((r) => setPast(r.data)).catch(() => {});
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    const unsub = subscribeJob(JOB_KEY, (snap) => {
+      setStatus(snap.status || "idle");
+      if (snap.status === "done" && snap.result) { setResult(snap.result); load(); }
+      else if (snap.status === "error") {
+        toast.error(formatApiErrorDetail(snap.error?.response?.data?.detail) || "Reddit search failed");
+      }
+    });
+    return () => { unsub(); };
+  }, []);
 
   const run = async () => {
     if (!topic.trim()) { toast.error("Enter a topic"); return; }
-    setLoading(true);
-    try { const { data } = await http.post("/reddit", { topic }); setResult(data); load(); toast.success("Reddit opportunities found"); }
-    catch (e) { toast.error(formatApiErrorDetail(e.response?.data?.detail)); }
-    finally { setLoading(false); }
+    try {
+      await startSingleShotJob({ key: JOB_KEY, postPath: "/reddit", postBody: { topic } });
+      toast.success("Reddit opportunities found");
+    } catch {
+      /* error surfaced via subscription */
+    }
   };
 
   const r = result;
@@ -86,7 +108,7 @@ export default function Reddit() {
       {past.length === 0 ? <EmptyState icon={MessageSquare} text="No Reddit searches yet." /> : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {past.map((p) => (
-            <button key={p.id} onClick={() => { setResult(p); window.scrollTo({ top: 0, behavior: "smooth" }); }} data-testid={`reddit-past-${p.id}`}
+            <button key={p.id} onClick={() => { setJobResult(JOB_KEY, p); setResult(p); window.scrollTo({ top: 0, behavior: "smooth" }); }} data-testid={`reddit-past-${p.id}`}
               className="text-left bg-white border border-border/60 rounded-xl p-5 transition-transform duration-200 hover:-translate-y-1 hover:shadow-lg">
               <p className="font-head font-bold truncate">{p.topic}</p>
               <p className="text-xs text-muted-foreground mt-2">{p.subreddits?.length || 0} subreddits · {new Date(p.created_at).toLocaleDateString()}</p>

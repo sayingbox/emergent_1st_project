@@ -1,5 +1,12 @@
 import { useEffect, useState } from "react";
+import { useSessionState } from "@/hooks/useSessionState";
 import { http, formatApiErrorDetail } from "@/lib/api";
+import {
+  startSingleShotJob,
+  subscribe as subscribeJob,
+  setResult as setJobResult,
+  getState as getJobState,
+} from "@/lib/jobRegistry";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,25 +19,43 @@ import { toast } from "sonner";
 
 const engineLabels = { chatgpt: "ChatGPT", perplexity: "Perplexity", google_ai: "Google AI", gemini: "Gemini" };
 const posColor = { top: "bg-green-100 text-green-700 border-green-200", recommended: "bg-green-100 text-green-700 border-green-200", passing: "bg-amber-100 text-amber-700 border-amber-200", none: "bg-red-100 text-red-700 border-red-200" };
+const JOB_KEY = "visibility";
 
 export default function Visibility() {
-  const [brand, setBrand] = useState("");
-  const [domain, setDomain] = useState("");
-  const [prompts, setPrompts] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState(null);
+  const [brand, setBrand] = useSessionState("visibility:brand", "");
+  const [domain, setDomain] = useSessionState("visibility:domain", "");
+  const [prompts, setPrompts] = useSessionState("visibility:prompts", "");
+  const initial = getJobState(JOB_KEY);
+  const [status, setStatus] = useState(initial.status || "idle");
+  const [result, setResult] = useState(initial.result || null);
   const [past, setPast] = useState([]);
+  const loading = status === "running";
 
   const load = () => http.get("/visibility").then((r) => setPast(r.data)).catch(() => {});
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    const unsub = subscribeJob(JOB_KEY, (snap) => {
+      setStatus(snap.status || "idle");
+      if (snap.status === "done" && snap.result) {
+        setResult(snap.result);
+        load();
+      } else if (snap.status === "error") {
+        const err = snap.error;
+        toast.error(formatApiErrorDetail(err?.response?.data?.detail) || "Visibility scan failed");
+      }
+    });
+    return () => { unsub(); };
+  }, []);
 
   const run = async () => {
     const list = prompts.split("\n").map((p) => p.trim()).filter(Boolean);
     if (!brand.trim() || list.length === 0) { toast.error("Enter a brand and at least one prompt"); return; }
-    setLoading(true);
-    try { const { data } = await http.post("/visibility", { brand, domain: domain || null, prompts: list }); setResult(data); load(); toast.success("Visibility scan complete"); }
-    catch (e) { toast.error(formatApiErrorDetail(e.response?.data?.detail)); }
-    finally { setLoading(false); }
+    try {
+      await startSingleShotJob({ key: JOB_KEY, postPath: "/visibility", postBody: { brand, domain: domain || null, prompts: list } });
+      toast.success("Visibility scan complete");
+    } catch {
+      /* error already surfaced via subscription */
+    }
   };
 
   const r = result;
@@ -94,7 +119,7 @@ export default function Visibility() {
       {past.length === 0 ? <EmptyState icon={Activity} text="No visibility scans yet." /> : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {past.map((p) => (
-            <button key={p.id} onClick={() => { setResult(p); window.scrollTo({ top: 0, behavior: "smooth" }); }} data-testid={`vis-past-${p.id}`}
+            <button key={p.id} onClick={() => { setJobResult(JOB_KEY, p); setResult(p); window.scrollTo({ top: 0, behavior: "smooth" }); }} data-testid={`vis-past-${p.id}`}
               className="text-left bg-white border border-border/60 rounded-xl p-5 transition-transform duration-200 hover:-translate-y-1 hover:shadow-lg">
               <div className="flex items-center justify-between"><span className="font-head font-bold truncate">{p.brand}</span><span className="font-head text-2xl font-extrabold" style={{ color: scoreColor(p.visibility_score) }}>{p.visibility_score}</span></div>
               <p className="text-xs text-muted-foreground mt-2">{p.results?.length || 0} prompts · {new Date(p.created_at).toLocaleDateString()}</p>

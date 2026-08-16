@@ -1,5 +1,14 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
+import { useSessionState } from "@/hooks/useSessionState";
 import { http, formatApiErrorDetail } from "@/lib/api";
+import {
+  startPollingJob,
+  resumePollingJob,
+  readPersistedJobId,
+  subscribe as subscribeJob,
+  setResult as setJobResult,
+  getState as getJobState,
+} from "@/lib/jobRegistry";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -36,61 +45,52 @@ function Metric({ label, value, colored }) {
   );
 }
 
+const JOB_KEY = "domain-analysis";
+
 export default function DomainAnalysis() {
-  const [domain, setDomain] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState(null);
+  const [domain, setDomain] = useSessionState("domain-analysis:input", "");
   const [past, setPast] = useState([]);
   const [showAllCites, setShowAllCites] = useState(false);
   const [showAllPrompts, setShowAllPrompts] = useState(false);
-  const pollRef = useRef(null);
+
+  // Subscribe to the module-level job registry so an in-flight scan survives navigation.
+  const initial = getJobState(JOB_KEY);
+  const [status, setStatus] = useState(initial.status || "idle");
+  const [result, setResult] = useState(initial.result || null);
+  const loading = status === "running";
 
   const load = () => http.get("/domain").then((r) => setPast(r.data)).catch(() => {});
+
   useEffect(() => {
     load();
-    return () => { pollRef.current && clearInterval(pollRef.current); };
+    // Subscribe to registry updates for this page's job.
+    const unsub = subscribeJob(JOB_KEY, (snap) => {
+      setStatus(snap.status || "idle");
+      if (snap.status === "done" && snap.result) {
+        setResult(snap.result);
+        load();
+      } else if (snap.status === "error") {
+        toast.error(typeof snap.error === "string" ? snap.error : "Analysis failed — please try again");
+      }
+    });
+    // If we come back to the page while a job is still processing (fresh page-reload case),
+    // there'll be a jobId in sessionStorage — resume polling for it.
+    const savedJobId = readPersistedJobId(JOB_KEY);
+    if (savedJobId && getJobState(JOB_KEY).status !== "running") {
+      resumePollingJob({ key: JOB_KEY, jobId: savedJobId, statusPathTemplate: "/domain/{id}" });
+    }
+    return () => { unsub(); };
   }, []);
 
   const run = async () => {
     if (!domain.trim()) { toast.error("Enter a domain"); return; }
-    setLoading(true);
     setResult(null);
     setShowAllCites(false);
     setShowAllPrompts(false);
     try {
-      const { data } = await http.post("/domain/analyze", { domain });
-      const jobId = data.id;
-      pollRef.current && clearInterval(pollRef.current);
-      let elapsed = 0;
-      pollRef.current = setInterval(async () => {
-        elapsed += 3;
-        if (elapsed > 180) {
-          clearInterval(pollRef.current);
-          setLoading(false);
-          toast.error("Analysis is taking too long — please try again");
-          return;
-        }
-        try {
-          const { data: job } = await http.get(`/domain/${jobId}`);
-          if (job.status === "done") {
-            clearInterval(pollRef.current);
-            setResult(job);
-            setLoading(false);
-            load();
-            toast.success("Domain analyzed");
-          } else if (job.status === "error") {
-            clearInterval(pollRef.current);
-            setLoading(false);
-            toast.error("Analysis failed — please try again");
-          }
-        } catch {
-          clearInterval(pollRef.current);
-          setLoading(false);
-          toast.error("Lost connection while analyzing");
-        }
-      }, 3000);
+      await startPollingJob({ key: JOB_KEY, postPath: "/domain/analyze", postBody: { domain }, statusPathTemplate: "/domain/{id}" });
+      // Success/failure is reported via the subscription above.
     } catch (e) {
-      setLoading(false);
       toast.error(formatApiErrorDetail(e.response?.data?.detail));
     }
   };
@@ -344,7 +344,7 @@ export default function DomainAnalysis() {
       {past.length === 0 ? <EmptyState icon={Globe} text="No domain reports yet." /> : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {past.map((p) => (
-            <button key={p.id} onClick={() => { setResult(p); setShowAllCites(false); setShowAllPrompts(false); window.scrollTo({ top: 0, behavior: "smooth" }); }} data-testid={`domain-past-${p.id}`}
+            <button key={p.id} onClick={() => { setJobResult(JOB_KEY, p); setResult(p); setShowAllCites(false); setShowAllPrompts(false); window.scrollTo({ top: 0, behavior: "smooth" }); }} data-testid={`domain-past-${p.id}`}
               className="text-left bg-white border border-border/60 rounded-xl p-5 transition-transform duration-200 hover:-translate-y-1 hover:shadow-lg">
               <div className="flex items-center justify-between">
                 <span className="font-head font-bold truncate">{p.domain}</span>

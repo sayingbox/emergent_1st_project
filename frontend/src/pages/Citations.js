@@ -1,5 +1,12 @@
 import { useEffect, useState } from "react";
+import { useSessionState } from "@/hooks/useSessionState";
 import { http, formatApiErrorDetail } from "@/lib/api";
+import {
+  startSingleShotJob,
+  subscribe as subscribeJob,
+  setResult as setJobResult,
+  getState as getJobState,
+} from "@/lib/jobRegistry";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,23 +17,38 @@ import { Link2, Loader2, Sparkles, CheckCircle2, XCircle } from "lucide-react";
 import { toast } from "sonner";
 
 const typeColor = { official: "bg-blue-50 text-blue-700", editorial: "bg-purple-50 text-purple-700", community: "bg-orange-50 text-orange-700", reference: "bg-green-50 text-green-700", competitor: "bg-red-50 text-red-700" };
+const JOB_KEY = "citations";
 
 export default function Citations() {
-  const [query, setQuery] = useState("");
-  const [domain, setDomain] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState(null);
+  const [query, setQuery] = useSessionState("citations:query", "");
+  const [domain, setDomain] = useSessionState("citations:domain", "");
+  const initial = getJobState(JOB_KEY);
+  const [status, setStatus] = useState(initial.status || "idle");
+  const [result, setResult] = useState(initial.result || null);
   const [past, setPast] = useState([]);
+  const loading = status === "running";
 
   const load = () => http.get("/citations").then((r) => setPast(r.data)).catch(() => {});
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    const unsub = subscribeJob(JOB_KEY, (snap) => {
+      setStatus(snap.status || "idle");
+      if (snap.status === "done" && snap.result) { setResult(snap.result); load(); }
+      else if (snap.status === "error") {
+        toast.error(formatApiErrorDetail(snap.error?.response?.data?.detail) || "Citation lookup failed");
+      }
+    });
+    return () => { unsub(); };
+  }, []);
 
   const run = async () => {
     if (!query.trim()) { toast.error("Enter a query"); return; }
-    setLoading(true);
-    try { const { data } = await http.post("/citations", { query, domain: domain || null }); setResult(data); load(); toast.success("Citation sources predicted"); }
-    catch (e) { toast.error(formatApiErrorDetail(e.response?.data?.detail)); }
-    finally { setLoading(false); }
+    try {
+      await startSingleShotJob({ key: JOB_KEY, postPath: "/citations", postBody: { query, domain: domain || null } });
+      toast.success("Citation sources predicted");
+    } catch {
+      /* error surfaced via subscription */
+    }
   };
 
   const r = result;
@@ -77,7 +99,7 @@ export default function Citations() {
       {past.length === 0 ? <EmptyState icon={Link2} text="No citation lookups yet." /> : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {past.map((p) => (
-            <button key={p.id} onClick={() => { setResult(p); window.scrollTo({ top: 0, behavior: "smooth" }); }} data-testid={`cite-past-${p.id}`}
+            <button key={p.id} onClick={() => { setJobResult(JOB_KEY, p); setResult(p); window.scrollTo({ top: 0, behavior: "smooth" }); }} data-testid={`cite-past-${p.id}`}
               className="text-left bg-white border border-border/60 rounded-xl p-5 transition-transform duration-200 hover:-translate-y-1 hover:shadow-lg">
               <p className="font-head font-bold truncate">"{p.query}"</p>
               <p className="text-xs text-muted-foreground mt-2">{p.sources?.length || 0} sources · {new Date(p.created_at).toLocaleDateString()}</p>

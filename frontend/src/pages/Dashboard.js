@@ -1,6 +1,15 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
+import { useSessionState } from "@/hooks/useSessionState";
 import { http, formatApiErrorDetail } from "@/lib/api";
+import {
+  startPollingJob,
+  resumePollingJob,
+  readPersistedJobId,
+  subscribe as subscribeJob,
+  getState as getJobState,
+  reset as resetJob,
+} from "@/lib/jobRegistry";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -11,62 +20,55 @@ import { Link2, FileText, Sparkles, Trash2, ArrowUpRight, Loader2, History } fro
 import { toast } from "sonner";
 
 const scoreLabel = (s) => (s >= 75 ? "Strong" : s >= 50 ? "Needs work" : "Poor");
+const JOB_KEY = "optimizer";
 
 export default function Dashboard() {
-  const [tab, setTab] = useState("url");
-  const [url, setUrl] = useState("");
-  const [text, setText] = useState("");
-  const [query, setQuery] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [tab, setTab] = useSessionState("optimizer:tab", "url");
+  const [url, setUrl] = useSessionState("optimizer:url", "");
+  const [text, setText] = useSessionState("optimizer:text", "");
+  const [query, setQuery] = useSessionState("optimizer:query", "");
+  const initial = getJobState(JOB_KEY);
+  const [status, setStatus] = useState(initial.status || "idle");
   const [items, setItems] = useState([]);
   const navigate = useNavigate();
-  const pollRef = useRef(null);
+  const loading = status === "running";
 
   const load = async () => {
-    try { const { data } = await http.get("/analyses"); setItems(data); } catch {}
+    try { const { data } = await http.get("/analyses"); setItems(data); } catch { /* ignore */ }
   };
   useEffect(() => {
     load();
-    return () => { pollRef.current && clearInterval(pollRef.current); };
+    const unsub = subscribeJob(JOB_KEY, (snap) => {
+      setStatus(snap.status || "idle");
+      if (snap.status === "done" && snap.result?.id) {
+        toast.success("Analysis complete");
+        const id = snap.result.id;
+        resetJob(JOB_KEY);
+        navigate(`/app/analysis/${id}`);
+      } else if (snap.status === "error") {
+        const err = snap.error;
+        toast.error(typeof err === "string" ? err.slice(0, 160) : "Analysis failed — please try again");
+        resetJob(JOB_KEY);
+      }
+    });
+    const savedJobId = readPersistedJobId(JOB_KEY);
+    if (savedJobId && getJobState(JOB_KEY).status !== "running") {
+      resumePollingJob({ key: JOB_KEY, jobId: savedJobId, statusPathTemplate: "/analyses/{id}" });
+    }
+    return () => { unsub(); };
   }, []);
 
   const analyze = async () => {
     const content = tab === "url" ? url.trim() : text.trim();
     if (!content) { toast.error("Please provide content to analyze"); return; }
-    setLoading(true);
     try {
-      const { data } = await http.post("/analyses", { input_type: tab, content, target_query: query || null });
-      const jobId = data.id;
-      pollRef.current && clearInterval(pollRef.current);
-      let elapsed = 0;
-      pollRef.current = setInterval(async () => {
-        elapsed += 3;
-        if (elapsed > 180) {
-          clearInterval(pollRef.current);
-          setLoading(false);
-          toast.error("Analysis is taking too long — please try again");
-          return;
-        }
-        try {
-          const { data: job } = await http.get(`/analyses/${jobId}`);
-          if (job.status === "done") {
-            clearInterval(pollRef.current);
-            setLoading(false);
-            toast.success("Analysis complete");
-            navigate(`/app/analysis/${jobId}`);
-          } else if (job.status === "error") {
-            clearInterval(pollRef.current);
-            setLoading(false);
-            toast.error(job.error ? String(job.error).slice(0, 160) : "Analysis failed — please try again");
-          }
-        } catch {
-          clearInterval(pollRef.current);
-          setLoading(false);
-          toast.error("Lost connection while analyzing");
-        }
-      }, 3000);
+      await startPollingJob({
+        key: JOB_KEY,
+        postPath: "/analyses",
+        postBody: { input_type: tab, content, target_query: query || null },
+        statusPathTemplate: "/analyses/{id}",
+      });
     } catch (e) {
-      setLoading(false);
       toast.error(formatApiErrorDetail(e.response?.data?.detail) || "Analysis failed");
     }
   };
