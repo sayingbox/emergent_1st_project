@@ -570,6 +570,10 @@ class RedditInput(BaseModel):
     topic: str
 
 
+class ProjectInput(BaseModel):
+    domain: str
+
+
 from urllib.parse import urlparse, urljoin  # noqa: F811 (re-import for local readability)
 
 
@@ -1062,6 +1066,129 @@ async def dashboard(user: dict = Depends(get_current_user)):
         "visibility_trend": [{"date": v["created_at"], "score": v.get("visibility_score", 0), "label": v["brand"]} for v in list(reversed(vis))[-12:]],
         "activity": activity[:10],
     }
+
+
+# --- Projects: One-project-per-domain unified dashboard ---
+PROJECT_LIST_PROJECTION = {
+    "_id": 0, "id": 1, "domain": 1, "status": 1, "created_at": 1, "updated_at": 1,
+    "site_health_score": 1, "ai_readiness_score": 1, "avg_perf_score": 1,
+    "avg_seo_score": 1, "avg_aeo_score": 1, "total_pages": 1, "total_issues": 1,
+    "ai_citations_count": 1, "prompt_rankings_count": 1, "prompt_top_count": 1,
+    "brand": 1, "error": 1,
+}
+
+
+def _normalize_domain(raw: str) -> str:
+    d = (raw or "").strip().lower().replace("https://", "").replace("http://", "").strip("/")
+    d = d.split("/")[0]
+    if d.startswith("www."):
+        d = d[4:]
+    return d
+
+
+async def _run_project_scan(project_id: str, user_id: str, domain: str):
+    """Background task: runs the full scan and persists results to Mongo."""
+    from projects import run_full_project_scan
+    try:
+        result = await run_full_project_scan(domain, llm_json)
+        set_doc = {
+            "status": result.get("status", "done"),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "brand": result.get("brand") or {},
+            "site_health_score": result.get("site_health_score", 0),
+            "ai_readiness_score": result.get("ai_readiness_score", 0),
+            "avg_perf_score": result.get("avg_perf_score", 0),
+            "avg_seo_score": result.get("avg_seo_score", 0),
+            "avg_aeo_score": result.get("avg_aeo_score", 0),
+            "total_pages": result.get("total_pages", 0),
+            "total_issues": result.get("total_issues", 0),
+            "ai_citations_count": result.get("ai_citations_count", 0),
+            "prompt_rankings_count": result.get("prompt_rankings_count", 0),
+            "prompt_top_count": result.get("prompt_top_count", 0),
+            "error": result.get("error"),
+        }
+        await db.projects.update_one({"id": project_id}, {"$set": set_doc})
+        await db.project_pages.delete_many({"project_id": project_id})
+        await db.project_citations.delete_many({"project_id": project_id})
+        await db.project_rankings.delete_many({"project_id": project_id})
+        pages = result.get("pages") or []
+        citations = result.get("citations") or []
+        rankings = result.get("rankings") or []
+        if pages:
+            await db.project_pages.insert_many([{**p, "project_id": project_id, "id": secrets.token_hex(8)} for p in pages])
+        if citations:
+            await db.project_citations.insert_many([{**c, "project_id": project_id, "id": secrets.token_hex(8)} for c in citations])
+        if rankings:
+            await db.project_rankings.insert_many([{**r, "project_id": project_id, "id": secrets.token_hex(8)} for r in rankings])
+    except Exception as e:
+        logger.exception(f"project scan failed: {e}")
+        await db.projects.update_one({"id": project_id}, {"$set": {
+            "status": "error", "error": str(e)[:400],
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }})
+
+
+@api_router.post("/projects")
+async def create_project(body: ProjectInput, user: dict = Depends(get_current_user)):
+    from projects import new_project_doc
+    domain = _normalize_domain(body.domain)
+    if not domain or "." not in domain:
+        raise HTTPException(status_code=400, detail="Enter a valid domain, e.g. example.com")
+    existing = await db.projects.find_one({"user_id": user["id"], "domain": domain}, {"_id": 0})
+    if existing:
+        await db.projects.update_one({"id": existing["id"]}, {"$set": {
+            "status": "processing", "updated_at": datetime.now(timezone.utc).isoformat(),
+            "error": None,
+        }})
+        asyncio.create_task(_run_project_scan(existing["id"], user["id"], domain))
+        return {"id": existing["id"], "domain": domain, "status": "processing"}
+    doc = new_project_doc(user["id"], domain)
+    await db.projects.insert_one(doc)
+    asyncio.create_task(_run_project_scan(doc["id"], user["id"], domain))
+    return {"id": doc["id"], "domain": domain, "status": "processing"}
+
+
+@api_router.get("/projects")
+async def list_projects(user: dict = Depends(get_current_user)):
+    docs = await db.projects.find({"user_id": user["id"]}, PROJECT_LIST_PROJECTION).sort("updated_at", -1).to_list(200)
+    return docs
+
+
+@api_router.get("/projects/{project_id}")
+async def get_project(project_id: str, user: dict = Depends(get_current_user)):
+    doc = await db.projects.find_one({"id": project_id, "user_id": user["id"]}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Project not found")
+    pages = await db.project_pages.find({"project_id": project_id}, {"_id": 0}).sort("seo_score", 1).to_list(500)
+    citations = await db.project_citations.find({"project_id": project_id}, {"_id": 0}).to_list(200)
+    rankings = await db.project_rankings.find({"project_id": project_id}, {"_id": 0}).to_list(50)
+    return {**doc, "pages": pages, "citations": citations, "rankings": rankings}
+
+
+@api_router.post("/projects/{project_id}/rescan")
+async def rescan_project(project_id: str, user: dict = Depends(get_current_user)):
+    doc = await db.projects.find_one({"id": project_id, "user_id": user["id"]}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if doc.get("status") == "processing":
+        return {"id": project_id, "status": "processing", "domain": doc["domain"]}
+    await db.projects.update_one({"id": project_id}, {"$set": {
+        "status": "processing", "updated_at": datetime.now(timezone.utc).isoformat(), "error": None,
+    }})
+    asyncio.create_task(_run_project_scan(project_id, user["id"], doc["domain"]))
+    return {"id": project_id, "status": "processing", "domain": doc["domain"]}
+
+
+@api_router.delete("/projects/{project_id}")
+async def delete_project(project_id: str, user: dict = Depends(get_current_user)):
+    doc = await db.projects.find_one({"id": project_id, "user_id": user["id"]}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Project not found")
+    await db.projects.delete_one({"id": project_id})
+    await db.project_pages.delete_many({"project_id": project_id})
+    await db.project_citations.delete_many({"project_id": project_id})
+    await db.project_rankings.delete_many({"project_id": project_id})
+    return {"ok": True}
 
 
 app.include_router(api_router)

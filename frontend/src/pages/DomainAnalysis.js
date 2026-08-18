@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useSessionState } from "@/hooks/useSessionState";
 import { http, formatApiErrorDetail } from "@/lib/api";
 import {
@@ -48,6 +49,7 @@ function Metric({ label, value, colored }) {
 const JOB_KEY = "domain-analysis";
 
 export default function DomainAnalysis() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [domain, setDomain] = useSessionState("domain-analysis:input", "");
   const [past, setPast] = useState([]);
   const [showAllCites, setShowAllCites] = useState(false);
@@ -79,8 +81,22 @@ export default function DomainAnalysis() {
     if (savedJobId && getJobState(JOB_KEY).status !== "running") {
       resumePollingJob({ key: JOB_KEY, jobId: savedJobId, statusPathTemplate: "/domain/{id}" });
     }
+    // Pre-fill from URL query params (e.g. drill-in from Projects). Auto-run if ?autorun=1.
+    const qDomain = searchParams.get("domain");
+    const autorun = searchParams.get("autorun");
+    if (qDomain) {
+      setDomain(qDomain);
+      if (autorun === "1" && getJobState(JOB_KEY).status !== "running") {
+        // Trigger a fresh scan for that domain
+        setTimeout(() => {
+          startPollingJob({ key: JOB_KEY, postPath: "/domain/analyze", postBody: { domain: qDomain }, statusPathTemplate: "/domain/{id}" }).catch(() => {});
+        }, 100);
+      }
+      // Strip params so a manual reload doesn't retrigger
+      setSearchParams({}, { replace: true });
+    }
     return () => { unsub(); };
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const run = async () => {
     if (!domain.trim()) { toast.error("Enter a domain"); return; }

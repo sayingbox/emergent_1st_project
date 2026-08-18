@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate, useSearchParams, Link } from "react-router-dom";
 import { useSessionState } from "@/hooks/useSessionState";
 import { http, formatApiErrorDetail } from "@/lib/api";
 import {
@@ -23,6 +23,7 @@ const scoreLabel = (s) => (s >= 75 ? "Strong" : s >= 50 ? "Needs work" : "Poor")
 const JOB_KEY = "optimizer";
 
 export default function Dashboard() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [tab, setTab] = useSessionState("optimizer:tab", "url");
   const [url, setUrl] = useSessionState("optimizer:url", "");
   const [text, setText] = useSessionState("optimizer:text", "");
@@ -54,6 +55,13 @@ export default function Dashboard() {
     const savedJobId = readPersistedJobId(JOB_KEY);
     if (savedJobId && getJobState(JOB_KEY).status !== "running") {
       resumePollingJob({ key: JOB_KEY, jobId: savedJobId, statusPathTemplate: "/analyses/{id}" });
+    }
+    // Pre-fill from URL query params (drill-in from Projects)
+    const qUrl = searchParams.get("url");
+    if (qUrl) {
+      setTab("url");
+      setUrl(qUrl);
+      setSearchParams({}, { replace: true });
     }
     return () => { unsub(); };
   }, []);

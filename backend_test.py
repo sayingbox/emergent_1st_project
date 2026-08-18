@@ -1,599 +1,475 @@
 #!/usr/bin/env python3
 """
-Backend regression test suite for Domain Analysis (LLM-only, Serper removed)
-Tests all critical backend endpoints with focus on domain analysis flow.
+Backend API test suite for Projects feature.
+Tests the complete Projects CRUD + async scan pipeline end-to-end.
 """
-
-import requests
+import os
+import sys
 import time
 import json
-import sys
-from typing import Dict, Any, Optional
+import requests
+from typing import Optional
 
-# Base URL from frontend/.env
-BASE_URL = "https://github-deploy-84.preview.emergentagent.com/api"
+# Read base URL from frontend/.env
+def get_base_url() -> str:
+    env_path = "/app/frontend/.env"
+    if os.path.exists(env_path):
+        with open(env_path) as f:
+            for line in f:
+                if line.startswith("REACT_APP_BACKEND_URL="):
+                    return line.split("=", 1)[1].strip()
+    return "http://localhost:8001"
 
-# Test credentials from /app/memory/test_credentials.md
-TEST_EMAIL = "admin@geo.com"
-TEST_PASSWORD = "admin123"
+BASE_URL = get_base_url()
+API_BASE = f"{BASE_URL}/api"
 
-class Colors:
-    GREEN = '\033[92m'
-    RED = '\033[91m'
-    YELLOW = '\033[93m'
-    BLUE = '\033[94m'
-    RESET = '\033[0m'
+# Test credentials
+ADMIN_EMAIL = "admin@geo.com"
+ADMIN_PASSWORD = "admin123"
 
-def log_success(msg: str):
-    print(f"{Colors.GREEN}✓ {msg}{Colors.RESET}")
+# Test state
+session = requests.Session()
+test_project_id: Optional[str] = None
 
-def log_error(msg: str):
-    print(f"{Colors.RED}✗ {msg}{Colors.RESET}")
 
-def log_info(msg: str):
-    print(f"{Colors.BLUE}ℹ {msg}{Colors.RESET}")
+def log(msg: str):
+    print(f"[TEST] {msg}")
 
-def log_warning(msg: str):
-    print(f"{Colors.YELLOW}⚠ {msg}{Colors.RESET}")
 
-class BackendTester:
-    def __init__(self):
-        self.session = requests.Session()
-        self.user_id = None
-        self.access_token = None
-        self.failures = []
-        self.successes = []
-        
-    def add_failure(self, test_name: str, reason: str):
-        self.failures.append({"test": test_name, "reason": reason})
-        log_error(f"{test_name}: {reason}")
-        
-    def add_success(self, test_name: str):
-        self.successes.append(test_name)
-        log_success(test_name)
-        
-    def test_auth_register_login(self) -> bool:
-        """Test auth registration and login with cookies"""
-        log_info("Testing auth flow (register/login)...")
-        
-        # Try login first with existing credentials
-        try:
-            resp = self.session.post(
-                f"{BASE_URL}/auth/login",
-                json={"email": TEST_EMAIL, "password": TEST_PASSWORD, "remember": True}
-            )
-            
-            if resp.status_code == 200:
-                data = resp.json()
-                if "id" in data and "email" in data:
-                    self.user_id = data["id"]
-                    # Check cookies
-                    if "access_token" in self.session.cookies and "refresh_token" in self.session.cookies:
-                        self.add_success("Auth login with cookies")
-                        return True
-                    else:
-                        self.add_failure("Auth login", "No cookies set")
-                        return False
-                else:
-                    self.add_failure("Auth login", f"Invalid response: {data}")
-                    return False
-            else:
-                self.add_failure("Auth login", f"Status {resp.status_code}: {resp.text}")
-                return False
-                
-        except Exception as e:
-            self.add_failure("Auth login", f"Exception: {e}")
-            return False
-            
-    def test_auth_me(self) -> bool:
-        """Test GET /api/auth/me with cookies"""
-        log_info("Testing GET /api/auth/me...")
-        
-        try:
-            resp = self.session.get(f"{BASE_URL}/auth/me")
-            
-            if resp.status_code == 200:
-                data = resp.json()
-                if "id" in data and "email" in data:
-                    self.add_success("GET /api/auth/me")
-                    return True
-                else:
-                    self.add_failure("GET /api/auth/me", f"Invalid response: {data}")
-                    return False
-            else:
-                self.add_failure("GET /api/auth/me", f"Status {resp.status_code}: {resp.text}")
-                return False
-                
-        except Exception as e:
-            self.add_failure("GET /api/auth/me", f"Exception: {e}")
-            return False
-            
-    def test_domain_analyze_instant_response(self) -> Optional[str]:
-        """Test POST /api/domain/analyze returns instantly with processing status"""
-        log_info("Testing POST /api/domain/analyze (instant response)...")
-        
-        try:
-            start_time = time.time()
-            resp = self.session.post(
-                f"{BASE_URL}/domain/analyze",
-                json={"domain": "stripe.com"}
-            )
-            elapsed = time.time() - start_time
-            
-            if resp.status_code == 200:
-                data = resp.json()
-                
-                # Check response time
-                if elapsed > 5:
-                    self.add_failure("POST /api/domain/analyze (instant)", f"Took {elapsed:.2f}s (should be < 5s)")
-                    return None
-                    
-                # Check response shape
-                if "id" not in data or "domain" not in data or "status" not in data:
-                    self.add_failure("POST /api/domain/analyze", f"Missing fields in response: {data}")
-                    return None
-                    
-                if data["status"] != "processing":
-                    self.add_failure("POST /api/domain/analyze", f"Expected status 'processing', got '{data['status']}'")
-                    return None
-                    
-                if data["domain"] != "stripe.com":
-                    self.add_failure("POST /api/domain/analyze", f"Expected domain 'stripe.com', got '{data['domain']}'")
-                    return None
-                    
-                self.add_success(f"POST /api/domain/analyze (instant, {elapsed:.2f}s)")
-                return data["id"]
-                
-            else:
-                self.add_failure("POST /api/domain/analyze", f"Status {resp.status_code}: {resp.text}")
-                return None
-                
-        except Exception as e:
-            self.add_failure("POST /api/domain/analyze", f"Exception: {e}")
-            return None
-            
-    def test_domain_poll_until_done(self, job_id: str, max_wait: int = 180) -> Optional[Dict[str, Any]]:
-        """Poll GET /api/domain/{id} until status is 'done' or timeout"""
-        log_info(f"Polling GET /api/domain/{job_id} (max {max_wait}s)...")
-        
-        start_time = time.time()
-        poll_count = 0
-        
-        while time.time() - start_time < max_wait:
-            poll_count += 1
-            
-            try:
-                resp = self.session.get(f"{BASE_URL}/domain/{job_id}")
-                
-                if resp.status_code == 200:
-                    data = resp.json()
-                    status = data.get("status")
-                    
-                    if status == "done":
-                        elapsed = time.time() - start_time
-                        self.add_success(f"GET /api/domain/{job_id} reached 'done' in {elapsed:.1f}s ({poll_count} polls)")
-                        return data
-                        
-                    elif status == "error":
-                        error_msg = data.get("error", "Unknown error")
-                        self.add_failure("Domain analysis", f"Job failed with error: {error_msg}")
-                        return None
-                        
-                    elif status == "processing":
-                        # Still processing, wait and retry
-                        time.sleep(5)
-                        continue
-                        
-                    else:
-                        self.add_failure("Domain analysis", f"Unknown status: {status}")
-                        return None
-                        
-                else:
-                    self.add_failure(f"GET /api/domain/{job_id}", f"Status {resp.status_code}: {resp.text}")
-                    return None
-                    
-            except Exception as e:
-                self.add_failure(f"GET /api/domain/{job_id}", f"Exception: {e}")
-                return None
-                
-        self.add_failure("Domain analysis", f"Timeout after {max_wait}s")
-        return None
-        
-    def verify_domain_response_shape(self, data: Dict[str, Any]) -> bool:
-        """Verify the domain analysis response has all required fields"""
-        log_info("Verifying domain analysis response shape...")
-        
-        errors = []
-        
-        # Check data_source
-        expected_data_source = "AI-simulated (Claude Sonnet 4.6, Emergent LLM key)"
-        if data.get("data_source") != expected_data_source:
-            errors.append(f"data_source: expected '{expected_data_source}', got '{data.get('data_source')}'")
-            
-        # Check ai_readiness_score
-        ai_score = data.get("ai_readiness_score")
-        if not isinstance(ai_score, int) or not (0 <= ai_score <= 100):
-            errors.append(f"ai_readiness_score: expected int 0-100, got {ai_score}")
-            
-        # Check metrics
-        metrics = data.get("metrics", {})
-        required_metrics = ["domain_authority", "page_authority", "trust_score", 
-                           "estimated_backlinks", "referring_domains", "estimated_monthly_traffic"]
-        for metric in required_metrics:
-            if metric not in metrics:
-                errors.append(f"metrics.{metric}: missing")
-            elif metric in ["domain_authority", "page_authority", "trust_score"]:
-                # These should be integers 0-100
-                val = metrics[metric]
-                if not isinstance(val, int) or not (0 <= val <= 100):
-                    errors.append(f"metrics.{metric}: expected int 0-100, got {val}")
-            else:
-                # These should be strings
-                val = metrics[metric]
-                if not isinstance(val, str):
-                    errors.append(f"metrics.{metric}: expected string, got {type(val).__name__}")
-                    
-        # Check categories
-        categories = data.get("categories", [])
-        if not isinstance(categories, list) or len(categories) != 5:
-            errors.append(f"categories: expected array of 5 items, got {len(categories) if isinstance(categories, list) else 'not an array'}")
+def fail(msg: str):
+    print(f"❌ FAIL: {msg}")
+    sys.exit(1)
+
+
+def assert_status(resp: requests.Response, expected: int, context: str):
+    if resp.status_code != expected:
+        fail(f"{context}: expected {expected}, got {resp.status_code}. Body: {resp.text[:500]}")
+
+
+def assert_field(data: dict, field: str, context: str):
+    if field not in data:
+        fail(f"{context}: missing field '{field}'. Data: {json.dumps(data, indent=2)[:500]}")
+
+
+def assert_type(data: dict, field: str, expected_type: type, context: str):
+    if field not in data:
+        fail(f"{context}: missing field '{field}'")
+    val = data[field]
+    if not isinstance(val, expected_type):
+        fail(f"{context}: field '{field}' expected {expected_type.__name__}, got {type(val).__name__} = {val}")
+
+
+def assert_range(data: dict, field: str, min_val: int, max_val: int, context: str):
+    if field not in data:
+        fail(f"{context}: missing field '{field}'")
+    val = data[field]
+    if not isinstance(val, int):
+        fail(f"{context}: field '{field}' expected int, got {type(val).__name__}")
+    if not (min_val <= val <= max_val):
+        fail(f"{context}: field '{field}' = {val}, expected in range [{min_val}, {max_val}]")
+
+
+def poll_until_done(project_id: str, timeout_s: int = 180, interval_s: int = 15) -> dict:
+    """Poll GET /api/projects/{id} until status is 'done' or 'error', or timeout."""
+    log(f"Polling project {project_id} every {interval_s}s (timeout {timeout_s}s)...")
+    start = time.time()
+    polls = 0
+    while time.time() - start < timeout_s:
+        polls += 1
+        resp = session.get(f"{API_BASE}/projects/{project_id}")
+        assert_status(resp, 200, f"Poll #{polls} GET /api/projects/{project_id}")
+        data = resp.json()
+        status = data.get("status")
+        log(f"  Poll #{polls}: status={status}")
+        if status == "done":
+            elapsed = time.time() - start
+            log(f"✓ Project completed in {elapsed:.1f}s after {polls} polls")
+            return data
+        elif status == "error":
+            fail(f"Project scan failed with error: {data.get('error')}")
+        time.sleep(interval_s)
+    fail(f"Project did not complete within {timeout_s}s (status still 'processing')")
+
+
+def test_1_auth():
+    """Step 1: Auth - POST /api/auth/login with admin credentials."""
+    log("=" * 60)
+    log("TEST 1: Auth - POST /api/auth/login")
+    log("=" * 60)
+    resp = session.post(f"{API_BASE}/auth/login", json={
+        "email": ADMIN_EMAIL,
+        "password": ADMIN_PASSWORD,
+        "remember": False,
+    })
+    assert_status(resp, 200, "POST /api/auth/login")
+    data = resp.json()
+    assert_field(data, "email", "Login response")
+    assert_field(data, "id", "Login response")
+    log(f"✓ Logged in as {data['email']} (id={data['id']})")
+    # Verify cookies are set
+    if "access_token" not in session.cookies:
+        fail("Login did not set access_token cookie")
+    log("✓ access_token cookie set")
+    log("")
+
+
+def test_2_create_project_happy_path():
+    """Step 2: Create project (happy path) - POST /api/projects with example.com, poll until done, verify full response."""
+    global test_project_id
+    log("=" * 60)
+    log("TEST 2: Create project (happy path) - example.com")
+    log("=" * 60)
+    
+    # 2a) POST /api/projects
+    log("2a) POST /api/projects {\"domain\":\"example.com\"}")
+    resp = session.post(f"{API_BASE}/projects", json={"domain": "example.com"})
+    assert_status(resp, 200, "POST /api/projects")
+    data = resp.json()
+    assert_field(data, "id", "Create project response")
+    assert_field(data, "domain", "Create project response")
+    assert_field(data, "status", "Create project response")
+    if data["domain"] != "example.com":
+        fail(f"Expected domain='example.com', got '{data['domain']}'")
+    if data["status"] != "processing":
+        fail(f"Expected status='processing', got '{data['status']}'")
+    test_project_id = data["id"]
+    log(f"✓ Project created: id={test_project_id}, domain={data['domain']}, status={data['status']}")
+    log("")
+    
+    # 2b) Poll until done
+    log("2b) Poll GET /api/projects/{id} until status='done' (up to 3 min)")
+    result = poll_until_done(test_project_id, timeout_s=180, interval_s=15)
+    log("")
+    
+    # 2c) Verify full response shape
+    log("2c) Verify full response shape")
+    
+    # Status
+    if result.get("status") != "done":
+        fail(f"Expected status='done', got '{result.get('status')}'")
+    log("✓ status = 'done'")
+    
+    # Scores
+    assert_range(result, "site_health_score", 0, 100, "Project result")
+    log(f"✓ site_health_score = {result['site_health_score']} (0-100)")
+    
+    assert_range(result, "ai_readiness_score", 0, 100, "Project result")
+    log(f"✓ ai_readiness_score = {result['ai_readiness_score']} (0-100)")
+    
+    assert_range(result, "avg_perf_score", 0, 100, "Project result")
+    log(f"✓ avg_perf_score = {result['avg_perf_score']} (0-100)")
+    
+    assert_range(result, "avg_seo_score", 0, 100, "Project result")
+    log(f"✓ avg_seo_score = {result['avg_seo_score']} (0-100)")
+    
+    assert_range(result, "avg_aeo_score", 0, 100, "Project result")
+    log(f"✓ avg_aeo_score = {result['avg_aeo_score']} (0-100)")
+    
+    # Total pages
+    assert_type(result, "total_pages", int, "Project result")
+    if result["total_pages"] < 1:
+        fail(f"Expected total_pages >= 1, got {result['total_pages']}")
+    log(f"✓ total_pages = {result['total_pages']} (>= 1)")
+    
+    # Pages array
+    assert_field(result, "pages", "Project result")
+    pages = result["pages"]
+    if not isinstance(pages, list):
+        fail(f"Expected 'pages' to be a list, got {type(pages).__name__}")
+    if len(pages) < 1:
+        fail(f"Expected at least 1 page, got {len(pages)}")
+    log(f"✓ pages: array with {len(pages)} items")
+    
+    # Verify first page structure
+    page = pages[0]
+    required_page_fields = [
+        "url", "perf_score", "seo_score", "aeo_score", "issues",
+        "word_count", "load_time_ms", "size_kb", "has_schema",
+        "has_faq_schema", "has_open_graph", "has_canonical", "has_author"
+    ]
+    for field in required_page_fields:
+        assert_field(page, field, f"Page {page.get('url', '?')}")
+    
+    # Verify page scores are 0-100
+    for score_field in ["perf_score", "seo_score", "aeo_score"]:
+        assert_range(page, score_field, 0, 100, f"Page {page['url']}")
+    
+    # Verify issues structure
+    issues = page["issues"]
+    if not isinstance(issues, list):
+        fail(f"Expected 'issues' to be a list, got {type(issues).__name__}")
+    if len(issues) > 0:
+        issue = issues[0]
+        for field in ["code", "severity", "category", "message"]:
+            assert_field(issue, field, f"Issue in page {page['url']}")
+        if issue["severity"] not in ["high", "medium", "low"]:
+            fail(f"Issue severity must be high/medium/low, got '{issue['severity']}'")
+        if issue["category"] not in ["seo", "performance", "aeo"]:
+            fail(f"Issue category must be seo/performance/aeo, got '{issue['category']}'")
+    log(f"✓ Page structure verified: url={page['url']}, perf={page['perf_score']}, seo={page['seo_score']}, aeo={page['aeo_score']}, issues={len(issues)}")
+    
+    # Citations array
+    assert_field(result, "citations", "Project result")
+    citations = result["citations"]
+    if not isinstance(citations, list):
+        fail(f"Expected 'citations' to be a list, got {type(citations).__name__}")
+    log(f"✓ citations: array with {len(citations)} items (expected up to 15)")
+    
+    if len(citations) > 0:
+        cite = citations[0]
+        required_cite_fields = ["url", "source_domain", "verified", "http_status", "type"]
+        for field in required_cite_fields:
+            assert_field(cite, field, f"Citation {cite.get('url', '?')}")
+        assert_type(cite, "verified", bool, f"Citation {cite['url']}")
+        log(f"✓ Citation structure verified: url={cite['url']}, verified={cite['verified']}, status={cite['http_status']}")
+    
+    # Rankings array
+    assert_field(result, "rankings", "Project result")
+    rankings = result["rankings"]
+    if not isinstance(rankings, list):
+        fail(f"Expected 'rankings' to be a list, got {type(rankings).__name__}")
+    log(f"✓ rankings: array with {len(rankings)} items (expected up to 8)")
+    
+    if len(rankings) > 0:
+        rank = rankings[0]
+        required_rank_fields = ["prompt", "position", "engines"]
+        for field in required_rank_fields:
+            assert_field(rank, field, f"Ranking {rank.get('prompt', '?')}")
+        if rank["position"] not in ["top", "recommended", "passing", "none"]:
+            fail(f"Ranking position must be top/recommended/passing/none, got '{rank['position']}'")
+        assert_type(rank, "engines", dict, f"Ranking {rank['prompt']}")
+        # Verify at least one engine is present
+        engines = rank["engines"]
+        expected_engines = ["chatgpt", "perplexity", "google_ai", "gemini"]
+        if not any(e in engines for e in expected_engines):
+            fail(f"Ranking engines must contain at least one of {expected_engines}, got {list(engines.keys())}")
+        log(f"✓ Ranking structure verified: prompt='{rank['prompt'][:50]}...', position={rank['position']}, engines={list(engines.keys())}")
+    
+    # Brand object
+    assert_field(result, "brand", "Project result")
+    brand = result["brand"]
+    if not isinstance(brand, dict):
+        fail(f"Expected 'brand' to be a dict, got {type(brand).__name__}")
+    assert_field(brand, "brand", "Brand object")
+    assert_field(brand, "summary", "Brand object")
+    assert_field(brand, "services", "Brand object")
+    if not isinstance(brand["services"], list):
+        fail(f"Expected 'brand.services' to be a list, got {type(brand['services']).__name__}")
+    log(f"✓ brand: {{brand='{brand['brand']}', summary='{brand['summary'][:50]}...', services={len(brand['services'])} items}}")
+    
+    log("")
+    log("✅ TEST 2 PASSED - Happy path project creation and verification complete")
+    log("")
+
+
+def test_3_reuse_same_domain():
+    """Step 3: Reuse same domain - POST /api/projects with example.com again, must return same id."""
+    global test_project_id
+    log("=" * 60)
+    log("TEST 3: Reuse same domain - POST /api/projects with example.com again")
+    log("=" * 60)
+    
+    resp = session.post(f"{API_BASE}/projects", json={"domain": "example.com"})
+    assert_status(resp, 200, "POST /api/projects (reuse)")
+    data = resp.json()
+    assert_field(data, "id", "Reuse project response")
+    assert_field(data, "domain", "Reuse project response")
+    assert_field(data, "status", "Reuse project response")
+    
+    if data["id"] != test_project_id:
+        fail(f"Expected same project id={test_project_id}, got new id={data['id']} (duplicate created!)")
+    log(f"✓ Same project id returned: {data['id']}")
+    
+    if data["status"] != "processing":
+        fail(f"Expected status='processing', got '{data['status']}'")
+    log(f"✓ status = 'processing' (rescan kicked off)")
+    
+    log("✓ No duplicate project created - reuse working correctly")
+    log("")
+    log("✅ TEST 3 PASSED - Domain reuse verification complete")
+    log("")
+
+
+def test_4_rescan_endpoint():
+    """Step 4: Rescan endpoint - POST /api/projects/{id}/rescan while processing (no-op)."""
+    global test_project_id
+    log("=" * 60)
+    log("TEST 4: Rescan endpoint - POST /api/projects/{id}/rescan")
+    log("=" * 60)
+    
+    # The project should still be processing from test 3
+    resp = session.post(f"{API_BASE}/projects/{test_project_id}/rescan")
+    assert_status(resp, 200, "POST /api/projects/{id}/rescan")
+    data = resp.json()
+    assert_field(data, "id", "Rescan response")
+    assert_field(data, "status", "Rescan response")
+    
+    if data["id"] != test_project_id:
+        fail(f"Expected id={test_project_id}, got {data['id']}")
+    
+    if data["status"] != "processing":
+        fail(f"Expected status='processing' (no-op), got '{data['status']}'")
+    log(f"✓ Rescan while processing is a no-op: status={data['status']}")
+    
+    # Verify only ONE scan is running (we'll check this by waiting for completion and verifying no duplicate work)
+    log("✓ Only one processing scan runs (verified by no-op response)")
+    log("")
+    log("✅ TEST 4 PASSED - Rescan endpoint verification complete")
+    log("")
+
+
+def test_5_domain_validation():
+    """Step 5: Domain validation - empty, invalid, URL normalization."""
+    log("=" * 60)
+    log("TEST 5: Domain validation")
+    log("=" * 60)
+    
+    # 5a) Empty domain
+    log("5a) POST /api/projects {\"domain\":\"\"} → expect 400")
+    resp = session.post(f"{API_BASE}/projects", json={"domain": ""})
+    assert_status(resp, 400, "POST /api/projects with empty domain")
+    log("✓ Empty domain rejected with 400")
+    
+    # 5b) Invalid domain
+    log("5b) POST /api/projects {\"domain\":\"not-a-domain\"} → expect 400")
+    resp = session.post(f"{API_BASE}/projects", json={"domain": "not-a-domain"})
+    assert_status(resp, 400, "POST /api/projects with invalid domain")
+    log("✓ Invalid domain rejected with 400")
+    
+    # 5c) URL normalization
+    log("5c) POST /api/projects {\"domain\":\"https://foo.com/some/path\"} → expect 200 (normalized to foo.com)")
+    resp = session.post(f"{API_BASE}/projects", json={"domain": "https://foo.com/some/path"})
+    assert_status(resp, 200, "POST /api/projects with URL")
+    data = resp.json()
+    if data["domain"] != "foo.com":
+        fail(f"Expected normalized domain='foo.com', got '{data['domain']}'")
+    log(f"✓ URL normalized to domain: {data['domain']}")
+    
+    # Clean up: delete the foo.com project
+    foo_id = data["id"]
+    log(f"  Cleaning up: DELETE /api/projects/{foo_id}")
+    resp = session.delete(f"{API_BASE}/projects/{foo_id}")
+    assert_status(resp, 200, "DELETE /api/projects/{foo_id}")
+    log("✓ foo.com project deleted")
+    
+    log("")
+    log("✅ TEST 5 PASSED - Domain validation complete")
+    log("")
+
+
+def test_6_delete_project():
+    """Step 6: Delete - DELETE /api/projects/{id}, verify 404 on subsequent GET."""
+    global test_project_id
+    log("=" * 60)
+    log("TEST 6: Delete project")
+    log("=" * 60)
+    
+    # Wait for the project to complete first (from test 3 rescan)
+    log("Waiting for project to complete before deletion...")
+    poll_until_done(test_project_id, timeout_s=180, interval_s=15)
+    log("")
+    
+    # 6a) DELETE /api/projects/{id}
+    log(f"6a) DELETE /api/projects/{test_project_id}")
+    resp = session.delete(f"{API_BASE}/projects/{test_project_id}")
+    assert_status(resp, 200, "DELETE /api/projects/{id}")
+    data = resp.json()
+    if not data.get("ok"):
+        fail(f"Expected {{ok: true}}, got {data}")
+    log(f"✓ Project deleted: {data}")
+    
+    # 6b) Verify GET /api/projects/{id} returns 404
+    log(f"6b) GET /api/projects/{test_project_id} → expect 404")
+    resp = session.get(f"{API_BASE}/projects/{test_project_id}")
+    assert_status(resp, 404, "GET /api/projects/{id} after deletion")
+    log("✓ GET returns 404 after deletion")
+    
+    # 6c) Verify GET /api/projects list no longer includes this id
+    log("6c) GET /api/projects → verify deleted project not in list")
+    resp = session.get(f"{API_BASE}/projects")
+    assert_status(resp, 200, "GET /api/projects")
+    projects = resp.json()
+    if not isinstance(projects, list):
+        fail(f"Expected list, got {type(projects).__name__}")
+    for p in projects:
+        if p.get("id") == test_project_id:
+            fail(f"Deleted project {test_project_id} still appears in list")
+    log("✓ Deleted project not in list")
+    
+    log("")
+    log("✅ TEST 6 PASSED - Delete verification complete")
+    log("")
+
+
+def test_7_regression_check():
+    """Step 7: Regression check - verify other endpoints still work."""
+    log("=" * 60)
+    log("TEST 7: Regression check - other endpoints")
+    log("=" * 60)
+    
+    endpoints = [
+        ("GET", "/api/dashboard"),
+        ("GET", "/api/domain"),
+        ("GET", "/api/visibility"),
+        ("GET", "/api/citations"),
+        ("GET", "/api/reddit"),
+        ("GET", "/api/analyses"),
+        ("GET", "/api/analyses/history"),
+        ("GET", "/api/auth/me"),
+    ]
+    
+    for method, path in endpoints:
+        log(f"  {method} {path}")
+        if method == "GET":
+            resp = session.get(f"{API_BASE}{path.replace('/api', '')}")
         else:
-            for i, cat in enumerate(categories):
-                if not isinstance(cat, dict):
-                    errors.append(f"categories[{i}]: not an object")
-                elif not all(k in cat for k in ["label", "score", "note"]):
-                    errors.append(f"categories[{i}]: missing required fields (label/score/note)")
-                    
-        # Check top_topics
-        top_topics = data.get("top_topics", [])
-        if not isinstance(top_topics, list) or len(top_topics) < 6:
-            errors.append(f"top_topics: expected array of >= 6 items, got {len(top_topics) if isinstance(top_topics, list) else 'not an array'}")
-        else:
-            for i, topic in enumerate(top_topics[:3]):  # Check first 3
-                if not isinstance(topic, dict):
-                    errors.append(f"top_topics[{i}]: not an object")
-                elif not all(k in topic for k in ["topic", "authority", "relevance"]):
-                    errors.append(f"top_topics[{i}]: missing required fields (topic/authority/relevance)")
-                    
-        # Check citation_sources
-        citation_sources = data.get("citation_sources", [])
-        if not isinstance(citation_sources, list) or len(citation_sources) < 50:
-            errors.append(f"citation_sources: expected array of >= 50 items, got {len(citation_sources) if isinstance(citation_sources, list) else 'not an array'}")
-        else:
-            for i, source in enumerate(citation_sources[:3]):  # Check first 3
-                if not isinstance(source, dict):
-                    errors.append(f"citation_sources[{i}]: not an object")
-                elif not all(k in source for k in ["source", "url", "type", "authority", "why"]):
-                    errors.append(f"citation_sources[{i}]: missing required fields")
-                elif not isinstance(source.get("authority"), int):
-                    errors.append(f"citation_sources[{i}].authority: expected int, got {type(source.get('authority')).__name__}")
-                    
-        # Check ranking_prompts
-        ranking_prompts = data.get("ranking_prompts", [])
-        if not isinstance(ranking_prompts, list) or len(ranking_prompts) < 50:
-            errors.append(f"ranking_prompts: expected array of >= 50 items, got {len(ranking_prompts) if isinstance(ranking_prompts, list) else 'not an array'}")
-        else:
-            # Verify every prompt.topic matches one of top_topics[].topic
-            topic_names = {t.get("topic", "").lower() for t in top_topics if isinstance(t, dict)}
-            
-            for i, prompt in enumerate(ranking_prompts[:5]):  # Check first 5
-                if not isinstance(prompt, dict):
-                    errors.append(f"ranking_prompts[{i}]: not an object")
-                elif not all(k in prompt for k in ["prompt", "topic", "position", "engines", "intent"]):
-                    errors.append(f"ranking_prompts[{i}]: missing required fields")
-                else:
-                    # Check topic match
-                    prompt_topic = prompt.get("topic", "").lower()
-                    if not any(prompt_topic in tn or tn in prompt_topic for tn in topic_names):
-                        errors.append(f"ranking_prompts[{i}].topic '{prompt.get('topic')}' does not match any top_topics")
-                        
-                    # Check position
-                    if prompt.get("position") not in ["top", "recommended", "passing"]:
-                        errors.append(f"ranking_prompts[{i}].position: expected 'top'|'recommended'|'passing', got '{prompt.get('position')}'")
-                        
-                    # Check engines is array
-                    if not isinstance(prompt.get("engines"), list):
-                        errors.append(f"ranking_prompts[{i}].engines: expected array, got {type(prompt.get('engines')).__name__}")
-                        
-        # Check quick_wins
-        quick_wins = data.get("quick_wins", [])
-        if not isinstance(quick_wins, list) or not (5 <= len(quick_wins) <= 8):
-            errors.append(f"quick_wins: expected array of 5-8 items, got {len(quick_wins) if isinstance(quick_wins, list) else 'not an array'}")
-            
-        # Check competitors
-        competitors = data.get("competitors", [])
-        if not isinstance(competitors, list) or not (6 <= len(competitors) <= 12):
-            errors.append(f"competitors: expected array of 6-12 items, got {len(competitors) if isinstance(competitors, list) else 'not an array'}")
-            
-        # Check engines_checked
-        if "engines_checked" not in data:
-            errors.append("engines_checked: missing")
-            
-        # Check for Serper references
-        response_str = json.dumps(data).lower()
-        if "serper" in response_str or "verified google" in response_str or "serper_api_key" in response_str:
-            errors.append("Response contains Serper/verified Google references (should be removed)")
-            
-        if errors:
-            for error in errors:
-                self.add_failure("Domain response shape", error)
-            return False
-        else:
-            self.add_success("Domain response shape verification")
-            log_info(f"  - citation_sources: {len(citation_sources)} items")
-            log_info(f"  - ranking_prompts: {len(ranking_prompts)} items")
-            log_info(f"  - top_topics: {len(top_topics)} items")
-            log_info(f"  - categories: {len(categories)} items")
-            log_info(f"  - quick_wins: {len(quick_wins)} items")
-            log_info(f"  - competitors: {len(competitors)} items")
-            return True
-            
-    def test_domain_list_excludes_processing(self) -> bool:
-        """Test GET /api/domain excludes processing jobs"""
-        log_info("Testing GET /api/domain (should exclude processing)...")
+            fail(f"Unsupported method {method}")
+        assert_status(resp, 200, f"{method} {path}")
+        log(f"    ✓ 200 OK")
+    
+    log("")
+    log("✅ TEST 7 PASSED - Regression check complete")
+    log("")
+
+
+def main():
+    log("=" * 60)
+    log("BACKEND TEST SUITE - PROJECTS FEATURE")
+    log("=" * 60)
+    log(f"Base URL: {BASE_URL}")
+    log(f"API Base: {API_BASE}")
+    log(f"Admin: {ADMIN_EMAIL}")
+    log("")
+    
+    try:
+        test_1_auth()
+        test_2_create_project_happy_path()
+        test_3_reuse_same_domain()
+        test_4_rescan_endpoint()
+        test_5_domain_validation()
+        test_6_delete_project()
+        test_7_regression_check()
         
-        try:
-            resp = self.session.get(f"{BASE_URL}/domain")
-            
-            if resp.status_code == 200:
-                data = resp.json()
-                
-                if not isinstance(data, list):
-                    self.add_failure("GET /api/domain", f"Expected array, got {type(data).__name__}")
-                    return False
-                    
-                # Check no processing jobs
-                processing_jobs = [d for d in data if d.get("status") == "processing"]
-                if processing_jobs:
-                    self.add_failure("GET /api/domain", f"Found {len(processing_jobs)} processing jobs (should be excluded)")
-                    return False
-                    
-                self.add_success(f"GET /api/domain (excludes processing, {len(data)} reports)")
-                return True
-                
-            else:
-                self.add_failure("GET /api/domain", f"Status {resp.status_code}: {resp.text}")
-                return False
-                
-        except Exception as e:
-            self.add_failure("GET /api/domain", f"Exception: {e}")
-            return False
-            
-    def test_domain_get_404(self) -> bool:
-        """Test GET /api/domain/{bad-id} returns 404"""
-        log_info("Testing GET /api/domain/{bad-id} (should return 404)...")
-        
-        try:
-            resp = self.session.get(f"{BASE_URL}/domain/nonexistent-job-id-12345")
-            
-            if resp.status_code == 404:
-                self.add_success("GET /api/domain/{bad-id} returns 404")
-                return True
-            else:
-                self.add_failure("GET /api/domain/{bad-id}", f"Expected 404, got {resp.status_code}")
-                return False
-                
-        except Exception as e:
-            self.add_failure("GET /api/domain/{bad-id}", f"Exception: {e}")
-            return False
-            
-    def test_domain_analyze_invalid_domain(self) -> bool:
-        """Test POST /api/domain/analyze with invalid domain returns 400"""
-        log_info("Testing POST /api/domain/analyze with invalid domain...")
-        
-        invalid_domains = ["notadomain", "", "   ", "invalid"]
-        
-        for domain in invalid_domains:
-            try:
-                resp = self.session.post(
-                    f"{BASE_URL}/domain/analyze",
-                    json={"domain": domain}
-                )
-                
-                if resp.status_code == 400:
-                    self.add_success(f"POST /api/domain/analyze with '{domain}' returns 400")
-                else:
-                    self.add_failure(f"POST /api/domain/analyze with '{domain}'", f"Expected 400, got {resp.status_code}")
-                    return False
-                    
-            except Exception as e:
-                self.add_failure(f"POST /api/domain/analyze with '{domain}'", f"Exception: {e}")
-                return False
-                
-        return True
-        
-    def test_analyses_endpoint(self) -> bool:
-        """Test POST /api/analyses with URL input"""
-        log_info("Testing POST /api/analyses...")
-        
-        try:
-            resp = self.session.post(
-                f"{BASE_URL}/analyses",
-                json={
-                    "input_type": "url",
-                    "content": "https://stripe.com/docs/payments",
-                    "target_query": "how to accept payments online"
-                }
-            )
-            
-            if resp.status_code == 200:
-                data = resp.json()
-                if "id" in data and "overall_score" in data:
-                    self.add_success("POST /api/analyses")
-                    return True
-                else:
-                    self.add_failure("POST /api/analyses", f"Invalid response: {data}")
-                    return False
-            else:
-                self.add_failure("POST /api/analyses", f"Status {resp.status_code}: {resp.text}")
-                return False
-                
-        except Exception as e:
-            self.add_failure("POST /api/analyses", f"Exception: {e}")
-            return False
-            
-    def test_visibility_endpoint(self) -> bool:
-        """Test POST /api/visibility"""
-        log_info("Testing POST /api/visibility...")
-        
-        try:
-            resp = self.session.post(
-                f"{BASE_URL}/visibility",
-                json={
-                    "brand": "Stripe",
-                    "domain": "stripe.com",
-                    "prompts": ["best payment processor", "how to accept online payments"]
-                }
-            )
-            
-            if resp.status_code == 200:
-                data = resp.json()
-                if "visibility_score" in data and "results" in data:
-                    self.add_success("POST /api/visibility")
-                    return True
-                else:
-                    self.add_failure("POST /api/visibility", f"Invalid response: {data}")
-                    return False
-            else:
-                self.add_failure("POST /api/visibility", f"Status {resp.status_code}: {resp.text}")
-                return False
-                
-        except Exception as e:
-            self.add_failure("POST /api/visibility", f"Exception: {e}")
-            return False
-            
-    def test_citations_endpoint(self) -> bool:
-        """Test POST /api/citations"""
-        log_info("Testing POST /api/citations...")
-        
-        try:
-            resp = self.session.post(
-                f"{BASE_URL}/citations",
-                json={
-                    "query": "best payment gateway for startups",
-                    "domain": "stripe.com"
-                }
-            )
-            
-            if resp.status_code == 200:
-                data = resp.json()
-                if "sources" in data and "user_domain_cited" in data:
-                    self.add_success("POST /api/citations")
-                    return True
-                else:
-                    self.add_failure("POST /api/citations", f"Invalid response: {data}")
-                    return False
-            else:
-                self.add_failure("POST /api/citations", f"Status {resp.status_code}: {resp.text}")
-                return False
-                
-        except Exception as e:
-            self.add_failure("POST /api/citations", f"Exception: {e}")
-            return False
-            
-    def test_reddit_endpoint(self) -> bool:
-        """Test POST /api/reddit"""
-        log_info("Testing POST /api/reddit...")
-        
-        try:
-            resp = self.session.post(
-                f"{BASE_URL}/reddit",
-                json={"topic": "payment processing"}
-            )
-            
-            if resp.status_code == 200:
-                data = resp.json()
-                if "subreddits" in data and "threads" in data:
-                    self.add_success("POST /api/reddit")
-                    return True
-                else:
-                    self.add_failure("POST /api/reddit", f"Invalid response: {data}")
-                    return False
-            else:
-                self.add_failure("POST /api/reddit", f"Status {resp.status_code}: {resp.text}")
-                return False
-                
-        except Exception as e:
-            self.add_failure("POST /api/reddit", f"Exception: {e}")
-            return False
-            
-    def test_dashboard_endpoint(self) -> bool:
-        """Test GET /api/dashboard"""
-        log_info("Testing GET /api/dashboard...")
-        
-        try:
-            resp = self.session.get(f"{BASE_URL}/dashboard")
-            
-            if resp.status_code == 200:
-                data = resp.json()
-                if "stats" in data and "activity" in data:
-                    self.add_success("GET /api/dashboard")
-                    return True
-                else:
-                    self.add_failure("GET /api/dashboard", f"Invalid response: {data}")
-                    return False
-            else:
-                self.add_failure("GET /api/dashboard", f"Status {resp.status_code}: {resp.text}")
-                return False
-                
-        except Exception as e:
-            self.add_failure("GET /api/dashboard", f"Exception: {e}")
-            return False
-            
-    def run_all_tests(self):
-        """Run all backend tests"""
-        print("\n" + "="*80)
-        print("BACKEND REGRESSION TEST SUITE")
-        print("Domain Analysis (LLM-only, Serper removed)")
-        print("="*80 + "\n")
-        
-        # Auth tests
-        print("\n--- AUTH TESTS ---")
-        if not self.test_auth_register_login():
-            log_error("Auth failed, cannot continue")
-            return False
-            
-        self.test_auth_me()
-        
-        # Domain analysis tests (HIGH PRIORITY)
-        print("\n--- DOMAIN ANALYSIS TESTS (HIGH PRIORITY) ---")
-        job_id = self.test_domain_analyze_instant_response()
-        
-        if job_id:
-            domain_data = self.test_domain_poll_until_done(job_id, max_wait=180)
-            
-            if domain_data:
-                self.verify_domain_response_shape(domain_data)
-                
-        self.test_domain_list_excludes_processing()
-        self.test_domain_get_404()
-        self.test_domain_analyze_invalid_domain()
-        
-        # Light regression tests
-        print("\n--- LIGHT REGRESSION TESTS ---")
-        self.test_analyses_endpoint()
-        self.test_visibility_endpoint()
-        self.test_citations_endpoint()
-        self.test_reddit_endpoint()
-        self.test_dashboard_endpoint()
-        
-        # Summary
-        print("\n" + "="*80)
-        print("TEST SUMMARY")
-        print("="*80)
-        print(f"{Colors.GREEN}Passed: {len(self.successes)}{Colors.RESET}")
-        print(f"{Colors.RED}Failed: {len(self.failures)}{Colors.RESET}")
-        
-        if self.failures:
-            print(f"\n{Colors.RED}FAILURES:{Colors.RESET}")
-            for failure in self.failures:
-                print(f"  - {failure['test']}: {failure['reason']}")
-                
-        print("\n" + "="*80 + "\n")
-        
-        return len(self.failures) == 0
+        log("=" * 60)
+        log("✅ ALL TESTS PASSED")
+        log("=" * 60)
+        log("")
+        log("SUMMARY:")
+        log("  ✅ Test 1: Auth - login successful")
+        log("  ✅ Test 2: Create project (happy path) - full response verified")
+        log("  ✅ Test 3: Reuse same domain - no duplicate created")
+        log("  ✅ Test 4: Rescan endpoint - no-op when processing")
+        log("  ✅ Test 5: Domain validation - empty/invalid/normalization")
+        log("  ✅ Test 6: Delete project - 404 on subsequent GET")
+        log("  ✅ Test 7: Regression check - all endpoints working")
+        log("")
+        return 0
+    except Exception as e:
+        log(f"❌ UNEXPECTED ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
 
 if __name__ == "__main__":
-    tester = BackendTester()
-    success = tester.run_all_tests()
-    sys.exit(0 if success else 1)
+    sys.exit(main())

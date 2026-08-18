@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useSessionState } from "@/hooks/useSessionState";
 import { http, formatApiErrorDetail } from "@/lib/api";
 import {
@@ -22,6 +23,7 @@ const posColor = { top: "bg-green-100 text-green-700 border-green-200", recommen
 const JOB_KEY = "visibility";
 
 export default function Visibility() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [brand, setBrand] = useSessionState("visibility:brand", "");
   const [domain, setDomain] = useSessionState("visibility:domain", "");
   const [prompts, setPrompts] = useSessionState("visibility:prompts", "");
@@ -44,8 +46,14 @@ export default function Visibility() {
         toast.error(formatApiErrorDetail(err?.response?.data?.detail) || "Visibility scan failed");
       }
     });
+    // Pre-fill from URL query params (drill-in from Projects)
+    const qBrand = searchParams.get("brand");
+    const qDomain = searchParams.get("domain");
+    if (qBrand) setBrand(qBrand);
+    if (qDomain) setDomain(qDomain);
+    if (qBrand || qDomain) setSearchParams({}, { replace: true });
     return () => { unsub(); };
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const run = async () => {
     const list = prompts.split("\n").map((p) => p.trim()).filter(Boolean);

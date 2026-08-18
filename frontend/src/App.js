@@ -11,6 +11,8 @@ import Reddit from "@/pages/Reddit";
 import Optimizer from "@/pages/Dashboard";
 import AnalysisDetail from "@/pages/AnalysisDetail";
 import History from "@/pages/History";
+import Projects from "@/pages/Projects";
+import ProjectDetail from "@/pages/ProjectDetail";
 import { Toaster } from "@/components/ui/sonner";
 import { Loader2 } from "lucide-react";
 
@@ -36,6 +38,8 @@ function App() {
           <Routes>
             <Route path="/login" element={<LoginRoute />} />
             <Route path="/app" element={<Protected><Overview /></Protected>} />
+            <Route path="/app/projects" element={<Protected><Projects /></Protected>} />
+            <Route path="/app/projects/:id" element={<Protected><ProjectDetail /></Protected>} />
             <Route path="/app/domain" element={<Protected><DomainAnalysis /></Protected>} />
             <Route path="/app/visibility" element={<Protected><Visibility /></Protected>} />
             <Route path="/app/citations" element={<Protected><Citations /></Protected>} />

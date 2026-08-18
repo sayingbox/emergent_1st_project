@@ -1,12 +1,13 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
-import { LayoutDashboard, Globe, Activity, Link2, MessageSquare, FileText, LogOut } from "lucide-react";
+import { LayoutDashboard, Globe, Activity, Link2, MessageSquare, FileText, LogOut, FolderKanban } from "lucide-react";
 
 const groups = [
   {
     label: "Overview",
     items: [
       { to: "/app", label: "Dashboard", icon: LayoutDashboard },
+      { to: "/app/projects", label: "Projects", icon: FolderKanban },
       { to: "/app/domain", label: "Domain Analysis", icon: Globe },
     ],
   },

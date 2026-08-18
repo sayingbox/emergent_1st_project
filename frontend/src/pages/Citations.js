@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useSessionState } from "@/hooks/useSessionState";
 import { http, formatApiErrorDetail } from "@/lib/api";
 import {
@@ -20,6 +21,7 @@ const typeColor = { official: "bg-blue-50 text-blue-700", editorial: "bg-purple-
 const JOB_KEY = "citations";
 
 export default function Citations() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [query, setQuery] = useSessionState("citations:query", "");
   const [domain, setDomain] = useSessionState("citations:domain", "");
   const initial = getJobState(JOB_KEY);
@@ -38,8 +40,13 @@ export default function Citations() {
         toast.error(formatApiErrorDetail(snap.error?.response?.data?.detail) || "Citation lookup failed");
       }
     });
+    const qDomain = searchParams.get("domain");
+    const qQuery = searchParams.get("query");
+    if (qDomain) setDomain(qDomain);
+    if (qQuery) setQuery(qQuery);
+    if (qDomain || qQuery) setSearchParams({}, { replace: true });
     return () => { unsub(); };
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const run = async () => {
     if (!query.trim()) { toast.error("Enter a query"); return; }
