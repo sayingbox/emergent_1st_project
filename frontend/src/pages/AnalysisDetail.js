@@ -155,7 +155,7 @@ export default function AnalysisDetail() {
             {(a.detected_schema_types || []).map((t) => <Badge key={t} variant="secondary" className="rounded-md">{t}</Badge>)}
             <div className="flex-1" />
             <Button size="sm" variant="outline" onClick={copyJson} data-testid="copy-json-btn"><Copy size={14} className="mr-2" /> Copy</Button>
-            <Button size="sm" className="bg-black text-white hover:bg-gray-800" onClick={downloadJson} data-testid="download-json-btn"><Download size={14} className="mr-2" /> Download</Button>
+            <Button size="sm" className="btn-brand hover:opacity-90" onClick={downloadJson} data-testid="download-json-btn"><Download size={14} className="mr-2" /> Download</Button>
           </div>
           <pre className="bg-[#0b0b0f] text-[#d4d4d8] rounded-lg p-5 overflow-auto text-xs leading-relaxed max-h-[520px] font-mono" data-testid="jsonld-viewer">
 {JSON.stringify(a.jsonld, null, 2)}
@@ -168,7 +168,7 @@ export default function AnalysisDetail() {
             <p className="text-sm text-muted-foreground mb-3">Simulate how a generative engine would answer a query using this page.</p>
             <div className="flex gap-2">
               <Input value={simQuery} onChange={(e) => setSimQuery(e.target.value)} placeholder="Enter a target query…" data-testid="sim-query-input" />
-              <Button onClick={runSim} disabled={simLoading} className="bg-black text-white hover:bg-gray-800 shrink-0" data-testid="simulate-btn">
+              <Button onClick={runSim} disabled={simLoading} className="btn-brand hover:opacity-90 shrink-0" data-testid="simulate-btn">
                 {simLoading ? <Loader2 size={16} className="animate-spin" /> : <><Sparkles size={16} className="mr-2" /> Simulate</>}
               </Button>
             </div>
@@ -194,7 +194,7 @@ export default function AnalysisDetail() {
 
         {/* GAPS */}
         <TabsContent value="gaps" className="mt-6 space-y-4">
-          <Button onClick={runGaps} disabled={gapLoading} className="bg-black text-white hover:bg-gray-800" data-testid="find-gaps-btn">
+          <Button onClick={runGaps} disabled={gapLoading} className="btn-brand hover:opacity-90" data-testid="find-gaps-btn">
             {gapLoading ? <><Loader2 size={16} className="mr-2 animate-spin" /> Finding gaps…</> : <><HelpCircle size={16} className="mr-2" /> Find question gaps</>}
           </Button>
           <div className="space-y-2" data-testid="gaps-list">

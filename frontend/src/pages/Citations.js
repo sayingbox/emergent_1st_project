@@ -67,7 +67,7 @@ export default function Citations() {
         <div><label className="text-xs uppercase font-bold text-muted-foreground">Query</label><Input value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Enter" && run()} placeholder='e.g. "best crm for startups"' className="mt-1.5" data-testid="citation-query-input" /></div>
         <div className="flex flex-col sm:flex-row gap-3 sm:items-end">
           <div className="flex-1"><label className="text-xs uppercase font-bold text-muted-foreground">Your domain (optional)</label><Input value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="yourdomain.com" className="mt-1.5" data-testid="citation-domain-input" /></div>
-          <Button onClick={run} disabled={loading} className="bg-black text-white hover:bg-gray-800" data-testid="run-citations-btn">
+          <Button onClick={run} disabled={loading} className="btn-brand hover:opacity-90" data-testid="run-citations-btn">
             {loading ? <Loader2 size={16} className="animate-spin" /> : <><Sparkles size={16} className="mr-2" /> Predict sources</>}
           </Button>
         </div>

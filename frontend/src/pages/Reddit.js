@@ -60,7 +60,7 @@ export default function Reddit() {
             <MessageSquare size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <Input value={topic} onChange={(e) => setTopic(e.target.value)} onKeyDown={(e) => e.key === "Enter" && run()} placeholder="e.g. project management software" className="pl-9" data-testid="reddit-topic-input" />
           </div>
-          <Button onClick={run} disabled={loading} className="bg-black text-white hover:bg-gray-800 shrink-0" data-testid="run-reddit-btn">
+          <Button onClick={run} disabled={loading} className="btn-brand hover:opacity-90 shrink-0" data-testid="run-reddit-btn">
             {loading ? <Loader2 size={16} className="animate-spin" /> : <><Sparkles size={16} className="mr-2" /> Find</>}
           </Button>
         </div>

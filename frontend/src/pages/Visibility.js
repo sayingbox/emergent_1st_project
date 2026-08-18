@@ -81,7 +81,7 @@ export default function Visibility() {
           <Textarea value={prompts} onChange={(e) => setPrompts(e.target.value)} rows={4} className="mt-1.5 font-mono text-sm" data-testid="prompts-input"
             placeholder={"best note taking app for teams\ntop project management tools\nhow to organize company docs"} />
         </div>
-        <Button onClick={run} disabled={loading} className="bg-black text-white hover:bg-gray-800 justify-self-start" data-testid="run-visibility-btn">
+        <Button onClick={run} disabled={loading} className="btn-brand hover:opacity-90 justify-self-start" data-testid="run-visibility-btn">
           {loading ? <><Loader2 size={16} className="mr-2 animate-spin" /> Scanning…</> : <><Sparkles size={16} className="mr-2" /> Run visibility scan</>}
         </Button>
       </Card>

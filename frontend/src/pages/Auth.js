@@ -35,7 +35,7 @@ export default function Auth() {
           style={{ background: "radial-gradient(circle, rgba(24,192,144,0.35) 0%, rgba(24,192,144,0) 70%)" }} />
         <div className="relative flex items-center gap-2.5">
           <img src="/logo.png" alt="Citetail logo" className="w-10 h-10 object-contain" />
-          <span className="font-head font-extrabold text-2xl tracking-tight text-white">Cite<span className="text-[#18C090]">tail</span></span>
+          <span className="font-head font-extrabold text-2xl tracking-tight text-white">Cite<span className="gradient-text">tail</span></span>
         </div>
         <div className="relative text-white">
           <h2 className="font-head text-4xl font-extrabold tracking-tight leading-tight">Rank in the age of<br/>AI answers.</h2>
@@ -80,7 +80,7 @@ export default function Auth() {
                 <span className="text-sm text-muted-foreground">Keep me signed in for 15 days</span>
               </label>
             )}
-            <Button type="submit" disabled={loading} className="w-full bg-[#18C090] text-white hover:bg-[#129E75] transition-colors" data-testid="auth-submit">
+            <Button type="submit" disabled={loading} className="w-full btn-brand transition-all" data-testid="auth-submit">
               {loading ? "Please wait…" : mode === "login" ? "Sign in" : "Create account"}
             </Button>
           </form>

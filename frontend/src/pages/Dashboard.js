@@ -122,7 +122,7 @@ export default function Dashboard() {
             placeholder='e.g. "how to reduce churn for SaaS"' className="mt-1.5" />
         </div>
         <Button onClick={analyze} disabled={loading} data-testid="analyze-btn"
-          className="mt-6 bg-black text-white hover:bg-gray-800 h-11 px-6">
+          className="mt-6 btn-brand hover:opacity-90 h-11 px-6">
           {loading ? <><Loader2 size={16} className="mr-2 animate-spin" /> Analyzing…</> : <><Sparkles size={16} className="mr-2" /> Run GEO audit</>}
         </Button>
       </Card>

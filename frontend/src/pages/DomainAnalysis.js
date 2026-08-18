@@ -123,7 +123,7 @@ export default function DomainAnalysis() {
             <Input value={domain} onChange={(e) => setDomain(e.target.value)} onKeyDown={(e) => e.key === "Enter" && run()}
               placeholder="example.com" className="pl-9" data-testid="domain-input" />
           </div>
-          <Button onClick={run} disabled={loading} className="bg-black text-white hover:bg-gray-800 shrink-0" data-testid="analyze-domain-btn">
+          <Button onClick={run} disabled={loading} className="btn-brand hover:opacity-90 shrink-0" data-testid="analyze-domain-btn">
             {loading ? <Loader2 size={16} className="animate-spin" /> : <><Sparkles size={16} className="mr-2" /> Analyze</>}
           </Button>
         </div>

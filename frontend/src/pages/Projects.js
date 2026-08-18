@@ -102,7 +102,7 @@ export default function Projects() {
               data-testid="project-domain-input"
             />
           </div>
-          <Button onClick={create} disabled={creating} className="bg-black text-white hover:bg-gray-800 shrink-0" data-testid="create-project-btn">
+          <Button onClick={create} disabled={creating} className="btn-brand hover:opacity-90 shrink-0" data-testid="create-project-btn">
             {creating ? <Loader2 size={16} className="animate-spin" /> : <><Sparkles size={16} className="mr-2" /> Add Project</>}
           </Button>
         </div>
