@@ -574,6 +574,11 @@ class SentimentInput(BaseModel):
     topic: str
 
 
+class AgentChatInput(BaseModel):
+    message: str
+    session_id: Optional[str] = None
+
+
 class ProjectInput(BaseModel):
     domain: str
 
@@ -1143,6 +1148,351 @@ async def sentiment_delete(sid: str, user: dict = Depends(get_current_user)):
     return {"ok": True}
 
 
+# ============ AI AGENT + ALERTS =====================================================
+AGENT_SYSTEM = """You are the Citetail AI Agent — a world-class GEO/AEO (Generative & Answer Engine Optimization) expert helping the user improve how AI engines (ChatGPT, Claude, Gemini, Perplexity, Copilot) discover, cite and rank their content.
+
+You have access to the user's real project data below. Ground EVERY answer in that data whenever possible. If the user asks about "my site" or "my score", refer to the concrete numbers below.
+
+RESPONSE RULES:
+1. Be concise and specific. Use short paragraphs and bullet lists.
+2. When you suggest a content fix (rewritten meta description, opening paragraph, heading, alt text, FAQ answer, schema JSON-LD), ALWAYS output the exact rewrite inside a fenced code block. Use a language tag that hints at the type:
+   - ```meta       for a meta description or title
+   - ```paragraph  for a rewritten opening / body paragraph
+   - ```heading    for a heading rewrite
+   - ```html       for HTML snippets
+   - ```json       for schema.org JSON-LD
+   - ```faq        for FAQ Q&A pairs
+   The UI will render a "Copy" button on every code block so the user can paste it into their CMS.
+3. When you make a claim that references user data ("your homepage has an SEO score of 62"), quote the exact number from the context.
+4. If the user asks something outside GEO/AEO/SEO/content strategy, politely refocus.
+5. If no data is available yet, tell the user which analysis to run (Projects scan, Domain Analysis, Content Optimizer, Visibility, Citations, Sentiment) and why.
+6. Never invent citations or ranking positions — only reference what is in the context."""
+
+
+async def build_user_context(user_id: str) -> str:
+    """Fetches the user's recent data and returns a compact JSON string for the LLM system prompt."""
+    projects = await db.projects.find(
+        {"user_id": user_id, "status": "done"},
+        {"_id": 0, "id": 1, "domain": 1, "site_health_score": 1, "ai_readiness_score": 1,
+         "avg_seo_score": 1, "avg_perf_score": 1, "avg_aeo_score": 1, "total_pages": 1,
+         "ai_citations_count": 1, "prompt_top_count": 1, "prompt_rankings_count": 1,
+         "brand": 1, "updated_at": 1},
+    ).sort("updated_at", -1).to_list(5)
+
+    analyses = await db.analyses.find(
+        {"user_id": user_id, "status": {"$in": ["done", None]}, "overall_score": {"$exists": True}},
+        {"_id": 0, "id": 1, "title": 1, "source_url": 1, "overall_score": 1,
+         "target_query": 1, "recommendations": 1, "created_at": 1},
+    ).sort("created_at", -1).to_list(3)
+
+    domains = await db.domains.find(
+        {"user_id": user_id, "status": {"$in": ["done", None]}},
+        {"_id": 0, "id": 1, "domain": 1, "ai_readiness_score": 1, "created_at": 1},
+    ).sort("created_at", -1).to_list(3)
+
+    citations = await db.citations.find(
+        {"user_id": user_id},
+        {"_id": 0, "id": 1, "query": 1, "user_domain": 1, "user_domain_cited": 1, "user_domain_rank": 1, "created_at": 1},
+    ).sort("created_at", -1).to_list(5)
+
+    visibility = await db.visibility.find(
+        {"user_id": user_id},
+        {"_id": 0, "id": 1, "brand": 1, "visibility_score": 1, "prompts": 1, "created_at": 1},
+    ).sort("created_at", -1).to_list(3)
+
+    sentiments = await db.sentiments.find(
+        {"user_id": user_id},
+        {"_id": 0, "id": 1, "topic": 1, "overall_score": 1, "positive_pct": 1, "negative_pct": 1, "created_at": 1},
+    ).sort("created_at", -1).to_list(3)
+
+    # Trim analyses.recommendations to top 3 to keep context small
+    for a in analyses:
+        recs = a.get("recommendations") or []
+        a["recommendations"] = recs[:3] if isinstance(recs, list) else recs
+
+    # Trim visibility.prompts
+    for v in visibility:
+        prompts = v.get("prompts") or []
+        v["prompts"] = [{"prompt": p.get("prompt"), "position": p.get("position")} for p in prompts[:6]] if isinstance(prompts, list) else []
+
+    ctx = {
+        "projects": projects,
+        "recent_analyses": analyses,
+        "recent_domain_scans": domains,
+        "recent_citations": citations,
+        "recent_visibility": visibility,
+        "recent_sentiments": sentiments,
+    }
+    return json.dumps(ctx, default=str)
+
+
+async def generate_alerts_for_user(user_id: str) -> int:
+    """Scan the user's latest data and upsert alert docs (idempotent via signature).
+    Returns the number of NEW alerts created."""
+    new_count = 0
+    now = datetime.now(timezone.utc).isoformat()
+
+    async def upsert(sig: str, doc: dict) -> bool:
+        # Insert only if signature not already present for this user
+        existing = await db.alerts.find_one({"user_id": user_id, "signature": sig}, {"_id": 1})
+        if existing:
+            return False
+        await db.alerts.insert_one({
+            "id": secrets.token_hex(10),
+            "user_id": user_id,
+            "signature": sig,
+            "read": False,
+            "created_at": now,
+            **doc,
+        })
+        return True
+
+    # 1. Project scans: any completed project → citation & error & score alerts
+    async for p in db.projects.find({"user_id": user_id, "status": "done"}).sort("updated_at", -1).limit(5):
+        pid = p.get("id")
+        domain = p.get("domain", "your site")
+
+        # a) Citations detected
+        cite_count = p.get("ai_citations_count", 0) or 0
+        if cite_count > 0:
+            if await upsert(f"proj:{pid}:citations:{cite_count}", {
+                "type": "citation",
+                "severity": "info",
+                "title": f"{cite_count} AI citation source{'s' if cite_count != 1 else ''} found for {domain}",
+                "message": f"Citetail identified {cite_count} likely citation source{'s' if cite_count != 1 else ''} for {domain}. Review them in the project.",
+                "link": f"/app/projects/{pid}",
+            }):
+                new_count += 1
+
+        # b) Site health low
+        shs = p.get("site_health_score")
+        if isinstance(shs, (int, float)) and shs < 60:
+            if await upsert(f"proj:{pid}:sitehealth:{int(shs)}", {
+                "type": "score",
+                "severity": "warning",
+                "title": f"Site health is low: {int(shs)}/100 on {domain}",
+                "message": "Several pages are hurting your generative-engine readiness. Open the project to see the failing dimensions.",
+                "link": f"/app/projects/{pid}",
+            }):
+                new_count += 1
+
+        # c) AI-readiness low
+        ars = p.get("ai_readiness_score")
+        if isinstance(ars, (int, float)) and ars < 60:
+            if await upsert(f"proj:{pid}:aireadiness:{int(ars)}", {
+                "type": "score",
+                "severity": "warning",
+                "title": f"AI-readiness score dropped to {int(ars)} on {domain}",
+                "message": "AI engines may be struggling to cite this domain. Ask the AI Agent for a fix plan.",
+                "link": f"/app/agent",
+            }):
+                new_count += 1
+
+        # d) Ranking position issues
+        top_ct = p.get("prompt_top_count", 0) or 0
+        total_prompts = p.get("prompt_rankings_count", 0) or 0
+        if total_prompts and top_ct == 0:
+            if await upsert(f"proj:{pid}:rank:no-top-{total_prompts}", {
+                "type": "ranking",
+                "severity": "warning",
+                "title": f"{domain} not ranking in top-3 for any AI prompt",
+                "message": f"Across {total_prompts} tracked prompts, your domain never appears in the top 3 answers. Open the project for the exact prompts.",
+                "link": f"/app/projects/{pid}",
+            }):
+                new_count += 1
+
+        # e) Page errors
+        pages_with_errors = await db.project_pages.count_documents({
+            "project_id": pid,
+            "issues.severity": {"$in": ["error", "critical", "high"]},
+        })
+        if pages_with_errors:
+            if await upsert(f"proj:{pid}:errors:{pages_with_errors}", {
+                "type": "error",
+                "severity": "error",
+                "title": f"{pages_with_errors} page{'s' if pages_with_errors != 1 else ''} on {domain} have critical issues",
+                "message": "Fix these before AI engines re-crawl your site.",
+                "link": f"/app/projects/{pid}",
+            }):
+                new_count += 1
+
+    # 2. Latest analysis with high-priority recommendations
+    async for a in db.analyses.find({"user_id": user_id, "status": {"$in": ["done", None]}, "overall_score": {"$exists": True}}).sort("created_at", -1).limit(3):
+        aid = a.get("id")
+        recs = a.get("recommendations") or []
+        high = [r for r in recs if isinstance(r, dict) and (r.get("priority") == "high")]
+        if high:
+            if await upsert(f"analysis:{aid}:high:{len(high)}", {
+                "type": "error",
+                "severity": "warning",
+                "title": f"{len(high)} high-priority fix{'es' if len(high) != 1 else ''} needed on \"{(a.get('title') or a.get('source_url') or '')[:60]}\"",
+                "message": "Open the analysis or ask the AI Agent to write the fixes for you.",
+                "link": f"/app/analysis/{aid}",
+            }):
+                new_count += 1
+
+    return new_count
+
+
+@api_router.get("/alerts")
+async def alerts_list(user: dict = Depends(get_current_user)):
+    # Generate any new alerts on demand (idempotent), then return latest 50
+    await generate_alerts_for_user(user["id"])
+    docs = await db.alerts.find(
+        {"user_id": user["id"]},
+        {"_id": 0, "signature": 0},
+    ).sort("created_at", -1).to_list(50)
+    unread = sum(1 for d in docs if not d.get("read"))
+    return {"alerts": docs, "unread_count": unread}
+
+
+@api_router.post("/alerts/{aid}/read")
+async def alerts_read(aid: str, user: dict = Depends(get_current_user)):
+    r = await db.alerts.update_one({"id": aid, "user_id": user["id"]}, {"$set": {"read": True}})
+    if r.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Alert not found")
+    return {"ok": True}
+
+
+@api_router.post("/alerts/read-all")
+async def alerts_read_all(user: dict = Depends(get_current_user)):
+    await db.alerts.update_many({"user_id": user["id"], "read": False}, {"$set": {"read": True}})
+    return {"ok": True}
+
+
+@api_router.post("/agent/sessions")
+async def agent_session_create(user: dict = Depends(get_current_user)):
+    sid = secrets.token_hex(12)
+    doc = {
+        "id": sid,
+        "user_id": user["id"],
+        "title": "New chat",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.agent_sessions.insert_one(doc)
+    return {**{k: v for k, v in doc.items() if k != "_id"}, "messages": []}
+
+
+@api_router.get("/agent/sessions")
+async def agent_sessions_list(user: dict = Depends(get_current_user)):
+    docs = await db.agent_sessions.find({"user_id": user["id"]}, {"_id": 0}).sort("updated_at", -1).to_list(50)
+    return docs
+
+
+@api_router.get("/agent/sessions/{sid}")
+async def agent_session_get(sid: str, user: dict = Depends(get_current_user)):
+    s = await db.agent_sessions.find_one({"id": sid, "user_id": user["id"]}, {"_id": 0})
+    if not s:
+        raise HTTPException(status_code=404, detail="Session not found")
+    messages = await db.agent_messages.find({"session_id": sid}, {"_id": 0}).sort("created_at", 1).to_list(500)
+    return {**s, "messages": messages}
+
+
+@api_router.delete("/agent/sessions/{sid}")
+async def agent_session_delete(sid: str, user: dict = Depends(get_current_user)):
+    r = await db.agent_sessions.delete_one({"id": sid, "user_id": user["id"]})
+    if r.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Session not found")
+    await db.agent_messages.delete_many({"session_id": sid})
+    return {"ok": True}
+
+
+@api_router.post("/agent/chat")
+async def agent_chat(body: AgentChatInput, user: dict = Depends(get_current_user)):
+    msg = (body.message or "").strip()
+    if not msg:
+        raise HTTPException(status_code=400, detail="Message is required")
+    if len(msg) > 4000:
+        raise HTTPException(status_code=400, detail="Message too long (max 4000 chars)")
+
+    uid = user["id"]
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Ensure session
+    sid = body.session_id
+    session = None
+    if sid:
+        session = await db.agent_sessions.find_one({"id": sid, "user_id": uid}, {"_id": 0})
+    if not session:
+        sid = secrets.token_hex(12)
+        session = {
+            "id": sid, "user_id": uid, "title": msg[:60],
+            "created_at": now, "updated_at": now,
+        }
+        await db.agent_sessions.insert_one(session)
+
+    # Store user message
+    user_msg = {
+        "id": secrets.token_hex(10),
+        "session_id": sid,
+        "role": "user",
+        "content": msg,
+        "created_at": now,
+    }
+    await db.agent_messages.insert_one(user_msg)
+
+    # Fetch prior conversation (last 12 messages) for context continuity
+    prior = await db.agent_messages.find({"session_id": sid}, {"_id": 0}).sort("created_at", 1).to_list(500)
+    # Exclude the just-inserted user_msg from the "prior" for building the history block
+    history = [m for m in prior if m.get("id") != user_msg["id"]][-12:]
+    history_block = "\n".join([f"[{m['role'].upper()}] {m['content']}" for m in history]) if history else "(no prior turns)"
+
+    # Fetch user context data
+    try:
+        user_ctx_json = await build_user_context(uid)
+    except Exception as e:
+        logger.warning(f"agent: failed to build user context: {e}")
+        user_ctx_json = "{}"
+
+    system = f"""{AGENT_SYSTEM}
+
+USER_ID: {uid}
+CURRENT_USER_DATA (JSON):
+{user_ctx_json}
+
+RECENT_CONVERSATION (most recent last):
+{history_block}
+"""
+
+    # Call Claude Sonnet 4.6
+    try:
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=f"agent-{sid}",
+            system_message=system,
+        ).with_model("anthropic", "claude-sonnet-4-6").with_params(max_tokens=4096)
+        resp = await chat.send_message(UserMessage(text=msg))
+        reply_text = resp if isinstance(resp, str) else str(resp)
+    except Exception as e:
+        logger.error(f"agent chat error: {e}")
+        raise HTTPException(status_code=502, detail="AI agent failed to respond. Please retry.")
+
+    # Store assistant message
+    reply_created = datetime.now(timezone.utc).isoformat()
+    assistant_msg = {
+        "id": secrets.token_hex(10),
+        "session_id": sid,
+        "role": "assistant",
+        "content": reply_text,
+        "created_at": reply_created,
+    }
+    await db.agent_messages.insert_one(assistant_msg)
+
+    # Update session title (once) and updated_at
+    updates = {"updated_at": reply_created}
+    if session.get("title") in (None, "", "New chat"):
+        updates["title"] = msg[:60]
+    await db.agent_sessions.update_one({"id": sid}, {"$set": updates})
+
+    return {
+        "session_id": sid,
+        "user_message": {k: v for k, v in user_msg.items() if k != "_id"},
+        "assistant_message": {k: v for k, v in assistant_msg.items() if k != "_id"},
+    }
+
+
+# ============ DASHBOARD =============================================================
 @api_router.get("/dashboard")
 async def dashboard(user: dict = Depends(get_current_user)):
     uid = user["id"]

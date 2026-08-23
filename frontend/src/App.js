@@ -9,6 +9,7 @@ import Visibility from "@/pages/Visibility";
 import Citations from "@/pages/Citations";
 import Reddit from "@/pages/Reddit";
 import SentimentAnalysis from "@/pages/SentimentAnalysis";
+import AiAgent from "@/pages/AiAgent";
 import Optimizer from "@/pages/Dashboard";
 import AnalysisDetail from "@/pages/AnalysisDetail";
 import History from "@/pages/History";
@@ -47,6 +48,7 @@ function App() {
             <Route path="/app/sentiment" element={<Protected><SentimentAnalysis /></Protected>} />
             <Route path="/app/reddit" element={<Protected><Reddit /></Protected>} />
             <Route path="/app/optimizer" element={<Protected><Optimizer /></Protected>} />
+            <Route path="/app/agent" element={<Protected><AiAgent /></Protected>} />
             <Route path="/app/history" element={<Protected><History /></Protected>} />
             <Route path="/app/analysis/:id" element={<Protected><AnalysisDetail /></Protected>} />
             <Route path="*" element={<Navigate to="/app" replace />} />
