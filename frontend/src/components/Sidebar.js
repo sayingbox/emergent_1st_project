@@ -2,7 +2,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { http } from "@/lib/api";
-import { LayoutDashboard, Globe, Activity, Link2, MessageSquare, FileText, LogOut, FolderKanban, Heart, Bot, Bell } from "lucide-react";
+import { LayoutDashboard, Globe, Activity, Link2, MessageSquare, FileText, LogOut, FolderKanban, Heart, Bot } from "lucide-react";
 
 const groups = [
   {
@@ -26,7 +26,12 @@ const groups = [
     label: "Answer Engine (AEO)",
     items: [
       { to: "/app/optimizer", label: "Content Optimizer", icon: FileText },
-      { to: "/app/agent", label: "AI Agent", icon: Bot },
+    ],
+  },
+  {
+    label: "Assistant",
+    items: [
+      { to: "/app/agent", label: "AI Agent", icon: Bot, badgeKey: "alerts" },
     ],
   },
 ];
@@ -70,10 +75,17 @@ export function Sidebar() {
             <div className="space-y-1">
               {g.items.map((it) => {
                 const active = isActive(it.to);
+                const badgeCount = it.badgeKey === "alerts" ? unread : 0;
                 return (
                   <Link key={it.to} to={it.to} data-testid={`nav-${it.label.toLowerCase().replace(/\s+/g, "-")}`}
                     className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${active ? "nav-active-glow" : "text-zinc-400 hover:text-white hover:bg-white/5"}`}>
-                    <it.icon size={18} strokeWidth={active ? 2.4 : 2} className={active ? "text-[#18C090]" : ""} /> {it.label}
+                    <it.icon size={18} strokeWidth={active ? 2.4 : 2} className={active ? "text-[#18C090]" : ""} />
+                    <span className="flex-1">{it.label}</span>
+                    {badgeCount > 0 && (
+                      <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold grid place-items-center">
+                        {badgeCount > 9 ? "9+" : badgeCount}
+                      </span>
+                    )}
                   </Link>
                 );
               })}
@@ -83,19 +95,6 @@ export function Sidebar() {
       </nav>
 
       <div className="p-3 border-t border-white/5">
-        <Link to="/app/agent" data-testid="sidebar-alerts-btn"
-          className="flex items-center gap-2 px-3 py-2 mb-2 rounded-lg text-sm text-zinc-300 hover:text-white hover:bg-white/5 transition-colors">
-          <div className="relative">
-            <Bell size={16} className={unread > 0 ? "text-[#18C090]" : ""} />
-            {unread > 0 && (
-              <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-white text-[9px] font-bold grid place-items-center border border-[#0b0f14]">
-                {unread > 9 ? "9+" : unread}
-              </span>
-            )}
-          </div>
-          <span className="text-xs font-medium">Alerts</span>
-          {unread > 0 && <span className="ml-auto text-[10px] text-emerald-400 font-bold">{unread} new</span>}
-        </Link>
         <div className="flex items-center gap-3 px-2 py-2">
           <div className="w-8 h-8 rounded-full sidebar-avatar text-white grid place-items-center text-xs font-bold">
             {(user?.name || user?.email || "U").slice(0, 1).toUpperCase()}
