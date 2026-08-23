@@ -8,6 +8,7 @@ import DomainAnalysis from "@/pages/DomainAnalysis";
 import Visibility from "@/pages/Visibility";
 import Citations from "@/pages/Citations";
 import Reddit from "@/pages/Reddit";
+import SentimentAnalysis from "@/pages/SentimentAnalysis";
 import Optimizer from "@/pages/Dashboard";
 import AnalysisDetail from "@/pages/AnalysisDetail";
 import History from "@/pages/History";
@@ -43,6 +44,7 @@ function App() {
             <Route path="/app/domain" element={<Protected><DomainAnalysis /></Protected>} />
             <Route path="/app/visibility" element={<Protected><Visibility /></Protected>} />
             <Route path="/app/citations" element={<Protected><Citations /></Protected>} />
+            <Route path="/app/sentiment" element={<Protected><SentimentAnalysis /></Protected>} />
             <Route path="/app/reddit" element={<Protected><Reddit /></Protected>} />
             <Route path="/app/optimizer" element={<Protected><Optimizer /></Protected>} />
             <Route path="/app/history" element={<Protected><History /></Protected>} />

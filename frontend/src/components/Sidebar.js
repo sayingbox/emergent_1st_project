@@ -1,6 +1,6 @@
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
-import { LayoutDashboard, Globe, Activity, Link2, MessageSquare, FileText, LogOut, FolderKanban } from "lucide-react";
+import { LayoutDashboard, Globe, Activity, Link2, MessageSquare, FileText, LogOut, FolderKanban, Heart } from "lucide-react";
 
 const groups = [
   {
@@ -16,6 +16,7 @@ const groups = [
     items: [
       { to: "/app/visibility", label: "Visibility Tracker", icon: Activity },
       { to: "/app/citations", label: "Citation Sources", icon: Link2 },
+      { to: "/app/sentiment", label: "Sentiment Analysis", icon: Heart },
       { to: "/app/reddit", label: "Reddit Finder", icon: MessageSquare },
     ],
   },

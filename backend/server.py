@@ -570,6 +570,10 @@ class RedditInput(BaseModel):
     topic: str
 
 
+class SentimentInput(BaseModel):
+    topic: str
+
+
 class ProjectInput(BaseModel):
     domain: str
 
@@ -1030,6 +1034,113 @@ Provide 5-8 subreddits (ranked by relevance) and 6-10 threads."""
 async def reddit_list(user: dict = Depends(get_current_user)):
     docs = await db.reddit.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(200)
     return docs
+
+
+@api_router.post("/sentiment/analyze")
+async def sentiment_analyze(body: SentimentInput, user: dict = Depends(get_current_user)):
+    topic = (body.topic or "").strip()
+    if not topic:
+        raise HTTPException(status_code=400, detail="Topic is required")
+    if len(topic) > 200:
+        raise HTTPException(status_code=400, detail="Topic is too long (max 200 chars)")
+
+    system = """You are an AI-engine sentiment analyst. For a given brand/topic, you simulate how major generative AI engines (ChatGPT, Claude, Gemini, Perplexity, Copilot, You.com) would describe it in a typical user answer — then you classify the sentiment of each of those answers. Your simulated answers must be realistic, grounded in publicly known facts about the brand (products, reception, criticisms, sentiment in media). If the topic is obscure or unknown, say so honestly in the answer and mark sentiment as neutral. Respond with ONLY valid minified JSON, no markdown, no prose."""
+
+    prompt = f"""TOPIC / BRAND: "{topic}"
+
+Simulate 8 realistic answers as if produced by the following AI engines when a user asks about this topic. Use these engines: ChatGPT, Claude, Gemini, Perplexity, Copilot, You.com, Meta AI, DeepSeek. For each answer:
+- excerpt: a 1-3 sentence realistic answer excerpt (35-70 words) that engine would produce
+- label: "positive" | "neutral" | "negative"
+- score: number 0-100 (0 = very negative, 50 = neutral, 100 = very positive)
+- reason: 1 short sentence explaining WHY that sentiment (which facts, tone, framing drive it)
+
+Then compute:
+- overall_score: 0-100 weighted average across all 8 engines
+- positive_pct, neutral_pct, negative_pct: integers that MUST sum to 100
+- top_positive: array of the 2 most-positive mentions (engine + excerpt + reason)
+- top_negative: array of the 2 most-negative mentions (engine + excerpt + reason)
+- insights: 3-5 short, ACTIONABLE recommendations (each 8-16 words) the brand could take to improve AI-engine sentiment (e.g. "Publish a public safety report to counter the 'privacy concerns' framing on Perplexity")
+- headline: 6-12 word summary of the overall sentiment story
+
+Return this EXACT JSON schema:
+{{
+ "topic": "{topic}",
+ "overall_score": <int 0-100>,
+ "headline": "<string>",
+ "positive_pct": <int>,
+ "neutral_pct": <int>,
+ "negative_pct": <int>,
+ "mentions": [
+   {{"engine":"ChatGPT","excerpt":"...","label":"positive|neutral|negative","score":<0-100>,"reason":"..."}}
+ ],
+ "top_positive": [{{"engine":"...","excerpt":"...","reason":"..."}}],
+ "top_negative": [{{"engine":"...","excerpt":"...","reason":"..."}}],
+ "insights": ["...", "..."]
+}}
+Return exactly 8 mentions. Ensure positive_pct + neutral_pct + negative_pct = 100."""
+
+    res = await llm_json(system, prompt, f"sentiment-{user['id']}-{secrets.token_hex(4)}", max_tokens=4096)
+
+    # Safety normalisation
+    def clamp(v, lo=0, hi=100, default=0):
+        try:
+            n = int(v)
+            return max(lo, min(hi, n))
+        except Exception:
+            return default
+
+    res["overall_score"] = clamp(res.get("overall_score"), default=50)
+    pos = clamp(res.get("positive_pct"), default=0)
+    neu = clamp(res.get("neutral_pct"), default=0)
+    neg = clamp(res.get("negative_pct"), default=0)
+    total = pos + neu + neg
+    if total != 100 and total > 0:
+        # rescale
+        pos = round(pos * 100 / total)
+        neu = round(neu * 100 / total)
+        neg = 100 - pos - neu
+    res["positive_pct"], res["neutral_pct"], res["negative_pct"] = pos, neu, neg
+    if not isinstance(res.get("mentions"), list):
+        res["mentions"] = []
+    for m in res["mentions"]:
+        if isinstance(m, dict):
+            m["score"] = clamp(m.get("score"), default=50)
+            if m.get("label") not in ("positive", "neutral", "negative"):
+                s = m["score"]
+                m["label"] = "positive" if s >= 65 else ("negative" if s <= 35 else "neutral")
+
+    doc = {
+        "id": secrets.token_hex(12),
+        "user_id": user["id"],
+        "topic": topic,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        **res,
+    }
+    await db.sentiments.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.get("/sentiment")
+async def sentiment_list(user: dict = Depends(get_current_user)):
+    docs = await db.sentiments.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return docs
+
+
+@api_router.get("/sentiment/{sid}")
+async def sentiment_get(sid: str, user: dict = Depends(get_current_user)):
+    doc = await db.sentiments.find_one({"id": sid, "user_id": user["id"]}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Not found")
+    return doc
+
+
+@api_router.delete("/sentiment/{sid}")
+async def sentiment_delete(sid: str, user: dict = Depends(get_current_user)):
+    r = await db.sentiments.delete_one({"id": sid, "user_id": user["id"]})
+    if r.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Not found")
+    return {"ok": True}
 
 
 @api_router.get("/dashboard")
