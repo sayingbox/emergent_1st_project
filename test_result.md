@@ -150,7 +150,49 @@ test_plan:
 
 agent_communication:
     - agent: "main"
-      message: "Domain Analysis reverted to LLM-only per user request. Serper integration fully removed from backend. Detailed metrics + 50+ entries verified via direct curl (stripe.com: 72 sources / 67 prompts). Please regression-test the domain flow: POST /api/domain/analyze returns {id, status:'processing'}; GET /api/domain/{id} eventually returns status:'done' with metrics.domain_authority/page_authority/trust_score/estimated_backlinks/referring_domains/estimated_monthly_traffic populated, citation_sources length >= 50, ranking_prompts length >= 50 (each with topic + position + engines + intent), categories (5), top_topics (>=6 objects with authority/relevance), quick_wins, competitors, and data_source='AI-simulated (Claude Sonnet 4.6, Emergent LLM key)'. Also verify /api/domain listing excludes 'processing' jobs and GET /api/domain/{id} returns 404 for wrong job. Auth uses cookies from POST /api/auth/register or /api/auth/login (remember flag). Existing regression (auth/analyses/visibility/citations/reddit/dashboard) should still pass."
+      message: |
+        User reported AEO Content Optimizer is (1) too slow and (2) sometimes fails.
+        Root causes fixed in backend/server.py:
+          - fetch_html used BLOCKING requests.get inside an async function → now wrapped in asyncio.to_thread (non-blocking; event loop stays free for other requests/polls).
+          - Chromium fallback threshold lowered from 250 → 120 words (avoids launching headless browser for legitimately short pages, saving 5–15s per scan).
+          - Playwright: goto timeout 25s → 20s, wait_for_timeout 1500ms → 800ms, whole render wrapped in asyncio.wait_for(35s) so we can't hang.
+          - llm_json now has a 90s hard timeout + 1 automatic retry with 1.2s backoff and clean error message on final failure.
+          - _run_analysis now: (a) returns a user-friendly error when the fetched page has <40 words (thin-content guard), (b) surfaces the specific error string (LLM detail, fetch RuntimeError, etc.) instead of "Could not fetch/parse content: <raw exception>", (c) logs total + fetch-only ms for observability.
+        Please test the AEO Content Optimizer backend flow:
+          1. Auth: POST /api/auth/login with admin@geo.com / admin123 (cookie session).
+          2. Happy path (content-heavy URL):
+             POST /api/analyses {"input_type":"url","content":"https://en.wikipedia.org/wiki/Search_engine_optimization","target_query":"what is SEO"}
+             → 200 with {id, status:"processing"} immediately.
+             Poll GET /api/analyses/{id} every 3s (cap 3 min). Expect status="done" with overall_score int 0-100, word_count > 500, recommendations (>=3), dimensions array present, source_url unchanged (no _cb leak).
+          3. Thin-content guard:
+             POST /api/analyses {"input_type":"url","content":"https://www.example.com","target_query":"example"}
+             → poll to "error" with error message mentioning "almost no readable text".
+          4. Paste-content path (no fetch):
+             POST /api/analyses {"input_type":"paste","content":"<any 200+ word blob of prose about SEO>","target_query":"SEO tips"}
+             → poll to "done" with score + recommendations. Should be faster than URL path (no fetch step).
+          5. Error message quality:
+             POST /api/analyses {"input_type":"url","content":"https://this-domain-definitely-does-not-exist-abc123xyz.com","target_query":"test"}
+             → poll to "error" with a human-readable error string (not a raw Python traceback).
+          6. Concurrency (proves non-blocking fix): Kick off 2 URL analyses at the same time and verify BOTH complete successfully (previously the second one would be blocked by the first's requests.get).
+          7. Light regression: GET /api/analyses (list) works; GET /api/dashboard works; POST /api/auth/logout works.
+        Do NOT test frontend — user will test manually.
+
+  - task: "AEO Content Optimizer performance + reliability fixes"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Fixed 4 bottlenecks in AEO analysis pipeline: (1) requests.get wrapped in asyncio.to_thread (was blocking event loop), (2) Chromium threshold 250→120 words + goto 25s→20s + wait 1500ms→800ms + wrapped in asyncio.wait_for(35s), (3) llm_json now has 90s timeout + 1 retry with backoff + clean error, (4) _run_analysis surfaces specific error strings + thin-content guard (<40 words) + duration logging. Direct verification: Wikipedia SEO article (5872 words) completed in 78s with 920ms fetch; example.com correctly returned thin-content error in 8s instead of hanging or producing garbage."
+        - working: true
+          agent: "testing"
+          comment: "COMPREHENSIVE TEST PASSED (7/7 tests). AEO Content Optimizer performance + reliability fixes fully verified: (1) AUTH: POST /api/auth/login successful, cookies working ✓. (2) HAPPY PATH (Wikipedia SEO article): POST instant (0.08s < 2s) ✓, poll completed in 70.4s ✓, response shape 100% compliant: status='done', overall_score=62 (0-100), word_count=5872 (>500), recommendations=10 items (>=3) with priority (high/medium/low) and fix fields, dimensions=8 items (>=6) with key/label/score, source_url='https://en.wikipedia.org/wiki/Search_engine_optimization' (no _cb param leaked) ✓. (3) THIN-CONTENT GUARD (example.com): completed in 6.2s (< 60s) ✓, status='error' with human-readable message 'The fetched page has almost no readable text. If it's a JavaScript-heavy site, please paste the content directly instead of the URL.' (no raw traceback) ✓. (4) PASTE-CONTENT PATH: completed in 52.1s ✓, status='done', overall_score=52, recommendations=10 items, no fetch step (faster than URL path) ✓. (5) ERROR MESSAGE QUALITY (bad URL): completed in 3.1s (< 60s) ✓, status='error' with human-readable message 'Could not fetch page content — the URL may be unreachable or blocking automated access.' (no raw exception repr) ✓. (6) CONCURRENCY TEST: 2 parallel analyses both created instantly (0.06s, 0.24s) ✓, both completed successfully (67.1s, 70.2s) proving non-blocking fetch works (if sequential would take 137.4s) ✓. (7) LIGHT REGRESSION: GET /api/analyses, GET /api/dashboard, GET /api/alerts, POST /api/agent/chat, POST /api/sentiment/analyze all return 200 ✓. NO ISSUES FOUND. All performance + reliability fixes verified and working correctly. Backend is production-ready."
+
+
     - agent: "testing"
       message: "✅ ALL BACKEND TESTS PASSED (16/16). Domain Analysis LLM-only refactor fully verified and working correctly. Comprehensive test results: (1) Domain analysis instant response < 5s ✓ (2) Polling completes in ~112s with status 'done' ✓ (3) Response shape 100% compliant: data_source correct, ai_readiness_score valid, all 6 metrics present, 62 citation_sources (>=50), 63 ranking_prompts (>=50) with topic matching, 8 top_topics, 5 categories, 8 quick_wins, 10 competitors, engines_checked present, NO Serper references ✓ (4) GET /api/domain excludes processing ✓ (5) 404 for bad job_id ✓ (6) 400 for invalid domains ✓ (7) Light regression all passed: auth (cookies working), analyses, visibility, citations, reddit, dashboard ✓. NO ISSUES FOUND. Backend is production-ready. Main agent should summarize and finish."
 user_problem_statement: |
@@ -565,4 +607,65 @@ agent_communication:
         
         TIMING: Project scans complete in ~30-45 seconds. All response shapes match specification exactly.
         
+    - agent: "testing"
+      message: |
+        ✅ ALL BACKEND TESTS PASSED (7/7). AEO Content Optimizer performance + reliability fixes fully verified and working correctly.
+        
+        COMPREHENSIVE TEST RESULTS:
+        
+        ✅ Test 1: Auth - POST /api/auth/login successful, cookies working
+        
+        ✅ Test 2: Happy path (Wikipedia SEO article) - PASSED
+           - POST instant response: 0.08s (< 2s requirement) ✓
+           - Poll completed in 70.4s (24 polls) ✓
+           - Response shape 100% compliant:
+             * status = 'done' ✓
+             * overall_score = 62 (0-100) ✓
+             * word_count = 5872 (> 500) ✓
+             * recommendations = 10 items (>= 3) with priority (high/medium/low) and fix fields ✓
+             * dimensions = 8 items (>= 6) with key/label/score (0-100) ✓
+             * source_url = 'https://en.wikipedia.org/wiki/Search_engine_optimization' (no _cb param leaked) ✓
+        
+        ✅ Test 3: Thin-content guard (example.com) - PASSED
+           - Completed in 6.2s (< 60s requirement) ✓
+           - status = 'error' ✓
+           - error = 'The fetched page has almost no readable text. If it's a JavaScript-heavy site, please paste the content directly instead of the URL.' ✓
+           - Human-readable message, no raw traceback ✓
+        
+        ✅ Test 4: Paste-content path (no fetch step) - PASSED
+           - Completed in 52.1s ✓
+           - status = 'done' ✓
+           - overall_score = 52 (0-100) ✓
+           - recommendations = 10 items (>= 3) ✓
+           - No fetch step (faster than URL path) ✓
+        
+        ✅ Test 5: Error message quality (bad URL) - PASSED
+           - Completed in 3.1s (< 60s requirement) ✓
+           - status = 'error' ✓
+           - error = 'Could not fetch page content — the URL may be unreachable or blocking automated access.' ✓
+           - Human-readable message, no raw exception repr ✓
+        
+        ✅ Test 6: Concurrency test (2 parallel analyses) - PASSED
+           - Both POST requests instant: 0.06s, 0.24s (< 2s each) ✓
+           - Analysis 1 (Wikipedia HTML): completed in 67.1s ✓
+           - Analysis 2 (Wikipedia CSS): completed in 70.2s ✓
+           - Both completed successfully, proving non-blocking fetch works ✓
+           - If sequential would take 137.4s, but both ran in parallel (max 70.2s) ✓
+        
+        ✅ Test 7: Light regression - PASSED
+           - GET /api/analyses → 200 ✓
+           - GET /api/dashboard → 200 ✓
+           - GET /api/alerts → 200 ✓
+           - POST /api/agent/chat → 200 ✓
+           - POST /api/sentiment/analyze → 200 ✓
+        
+        TIMING SUMMARY:
+        - Happy path (Wikipedia SEO): 70.4s total
+        - Thin-content guard (example.com): 6.2s total
+        - Paste-content path: 52.1s total
+        - Error handling (bad URL): 3.1s total
+        - Concurrency (2 parallel): 67.1s and 70.2s (both in parallel)
+        
+        NO ISSUES FOUND. All performance + reliability fixes verified and working correctly. Backend is production-ready. Main agent should summarize and finish.
+
         NO ISSUES FOUND. Backend is production-ready. Main agent should summarize and finish.

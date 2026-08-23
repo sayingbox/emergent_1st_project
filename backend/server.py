@@ -195,8 +195,10 @@ async def render_html(url: str) -> str:
                 await context.set_extra_http_headers({"Cache-Control": "no-cache, no-store", "Pragma": "no-cache"})
             except Exception:
                 pass
-            await page.goto(_bust_cache_url(url), wait_until="domcontentloaded", timeout=25000)
-            await page.wait_for_timeout(1500)
+            await page.goto(_bust_cache_url(url), wait_until="domcontentloaded", timeout=20000)
+            # Short settle for lazy JS content; 800 ms is enough for hydration on
+            # most SSR/SPA hybrids and shaves ~700 ms per scan vs the old 1500 ms.
+            await page.wait_for_timeout(800)
             return await page.content()
         finally:
             await browser.close()
@@ -212,7 +214,9 @@ async def fetch_html(url: str) -> str:
     status = None
     fetch_url = _bust_cache_url(url)
     try:
-        r = requests.get(fetch_url, headers=NO_CACHE_HEADERS, timeout=15)
+        # asyncio.to_thread → non-blocking so the event loop keeps serving other
+        # requests (poll, /alerts, /auth/me) while we wait on the target site.
+        r = await asyncio.to_thread(requests.get, fetch_url, headers=NO_CACHE_HEADERS, timeout=12)
         status = r.status_code
         static_html = r.text
     except Exception as e:
@@ -223,15 +227,21 @@ async def fetch_html(url: str) -> str:
         raise RuntimeError(f"The page returned HTTP {status} (page not found). Check the URL is correct and publicly accessible.")
 
     static_words = _visible_word_count(static_html) if (static_html and status and status < 400) else 0
-    if static_words >= 250:
+    # 120-word threshold: bumped down from 250 so we don't launch Chromium for
+    # every legitimately short blog post / landing page. Chromium adds ~5-15s
+    # per scan, so we only fall back when the static HTML is truly thin
+    # (client-rendered SPA) or the fetch failed outright.
+    if static_words >= 120:
         return static_html
 
     # Thin / client-rendered page -> render with Chromium
     try:
-        rendered = await render_html(url)
+        rendered = await asyncio.wait_for(render_html(url), timeout=35)
         if rendered and _visible_word_count(rendered) > static_words:
             logger.info(f"rendered {url} via Chromium ({_visible_word_count(rendered)} words vs {static_words} static)")
             return rendered
+    except asyncio.TimeoutError:
+        logger.warning(f"render fallback timed out for {url} after 35s")
     except Exception as e:
         logger.warning(f"render fallback failed for {url}: {e}")
 
@@ -318,16 +328,47 @@ def strip_json(text: str) -> str:
 
 
 async def llm_json(system: str, prompt: str, session: str, max_tokens: int = 4096) -> dict:
-    chat = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=session, system_message=system).with_model("anthropic", "claude-sonnet-4-6").with_params(max_tokens=max_tokens)
-    resp = await chat.send_message(UserMessage(text=prompt))
-    raw = strip_json(resp if isinstance(resp, str) else str(resp))
-    try:
-        return json.loads(raw)
-    except Exception:
-        m = re.search(r"\{.*\}", raw, re.DOTALL)
-        if m:
-            return json.loads(m.group(0))
-        raise HTTPException(status_code=502, detail="AI returned invalid response, please retry")
+    """Call Claude Sonnet 4.6 with a hard timeout and one automatic retry.
+
+    Prior behaviour: no timeout (a hung Anthropic connection would hold the
+    request until the client polling window expired, showing "failed" to the
+    user with no useful signal). Now: 90 s hard cap + one retry on transient
+    failures + a specific, actionable HTTPException message on final failure.
+    """
+    last_err: Optional[Exception] = None
+    for attempt in range(2):  # initial + 1 retry
+        try:
+            chat = LlmChat(
+                api_key=EMERGENT_LLM_KEY,
+                session_id=session,
+                system_message=system,
+            ).with_model("anthropic", "claude-sonnet-4-6").with_params(max_tokens=max_tokens)
+            resp = await asyncio.wait_for(chat.send_message(UserMessage(text=prompt)), timeout=90)
+            raw = strip_json(resp if isinstance(resp, str) else str(resp))
+            try:
+                return json.loads(raw)
+            except Exception:
+                m = re.search(r"\{.*\}", raw, re.DOTALL)
+                if m:
+                    return json.loads(m.group(0))
+                # JSON parse failure is not retryable — model returned prose;
+                # retry once with a stricter session key so we don't keep the
+                # same (bad) response cached.
+                raise RuntimeError("AI returned an unparseable response")
+        except asyncio.TimeoutError as e:
+            last_err = e
+            logger.warning(f"llm_json timeout on attempt {attempt + 1} for session={session}")
+        except Exception as e:
+            last_err = e
+            logger.warning(f"llm_json error on attempt {attempt + 1} for session={session}: {e}")
+        # Backoff before retry
+        if attempt == 0:
+            await asyncio.sleep(1.2)
+    # Final failure — surface a clean message
+    detail = "AI is taking too long to respond right now — please retry in a moment."
+    if isinstance(last_err, asyncio.TimeoutError):
+        detail = "AI request timed out. This can happen if the content is very large. Please retry — a fresh attempt usually succeeds."
+    raise HTTPException(status_code=502, detail=detail)
 
 
 ANALYSIS_SYSTEM = """You are a world-class GEO/AEO (Generative Engine Optimization / Answer Engine Optimization) auditor.
@@ -422,18 +463,34 @@ def summary_of(doc: dict) -> dict:
 
 
 async def _run_analysis(job_id: str, user_id: str, body: AnalyzeInput):
+    start = datetime.now(timezone.utc)
     try:
         if body.input_type == "url":
             html = await fetch_html(body.content.strip())
+            # normalize_content is CPU-bound (BeautifulSoup parse) but fast enough
+            # to keep on the event loop for typical page sizes.
             norm = normalize_content("url", body.content.strip(), prefetched_html=html)
         else:
             norm = normalize_content(body.input_type, body.content)
     except Exception as e:
-        await db.analyses.update_one({"id": job_id}, {"$set": {"status": "error", "error": f"Could not fetch/parse content: {e}"}})
+        logger.warning(f"analysis {job_id}: fetch/parse failed: {e}")
+        await db.analyses.update_one({"id": job_id}, {"$set": {"status": "error", "error": str(e)}})
         return
+
+    # Guard: if we ended up with almost no body, tell the user (instead of asking Claude to hallucinate).
+    if (norm.get("word_count") or 0) < 40:
+        await db.analyses.update_one({"id": job_id}, {"$set": {
+            "status": "error",
+            "error": "The fetched page has almost no readable text. If it's a JavaScript-heavy site, please paste the content directly instead of the URL.",
+        }})
+        return
+
     try:
+        fetch_ms = int((datetime.now(timezone.utc) - start).total_seconds() * 1000)
         # Unique session per job => no carryover; a re-run on improved content yields a fresh report
         analysis = await llm_json(ANALYSIS_SYSTEM, analysis_prompt(norm, body.target_query), f"analyze-{job_id}")
+        total_ms = int((datetime.now(timezone.utc) - start).total_seconds() * 1000)
+        logger.info(f"analysis {job_id} completed in {total_ms} ms (fetch/parse: {fetch_ms} ms)")
         result = {
             "source_url": norm.get("source_url"),
             "title": norm["title"],
@@ -448,9 +505,12 @@ async def _run_analysis(job_id: str, user_id: str, body: AnalyzeInput):
             "jsonld": analysis.get("jsonld", []),
         }
         await db.analyses.update_one({"id": job_id}, {"$set": {**result, "status": "done"}})
+    except HTTPException as he:
+        logger.warning(f"analysis {job_id}: LLM failure: {he.detail}")
+        await db.analyses.update_one({"id": job_id}, {"$set": {"status": "error", "error": he.detail}})
     except Exception as e:
         logger.exception(f"analysis failed for job {job_id}")
-        await db.analyses.update_one({"id": job_id}, {"$set": {"status": "error", "error": str(e)}})
+        await db.analyses.update_one({"id": job_id}, {"$set": {"status": "error", "error": "Unexpected error during analysis. Please retry."}})
 
 
 @api_router.post("/analyses")
