@@ -109,6 +109,7 @@ export default function PRCoverage() {
                             <div className="flex items-center gap-2 flex-wrap">
                               <span className="font-semibold text-sm">{a.publication}</span>
                               {a.type ? <Badge className={`rounded-md border capitalize text-[11px] ${typeColor[a.type] || typeColor.news}`}>{a.type}</Badge> : null}
+                              {a.pr_type ? <Badge className={`rounded-md border capitalize text-[11px] ${a.pr_type === "paid" ? "bg-fuchsia-100 text-fuchsia-700 border-fuchsia-200" : "bg-emerald-100 text-emerald-700 border-emerald-200"}`}>{a.pr_type} PR</Badge> : null}
                               {a.date ? <span className="text-[11px] text-muted-foreground">{a.date}</span> : null}
                             </div>
                             <p className="font-head font-bold text-[15px] mt-1">{a.headline}</p>

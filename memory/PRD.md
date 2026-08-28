@@ -106,3 +106,7 @@ User spec: Domain Analysis must follow a strict crawl-first workflow.
 - **#3 PR Coverage**: web searches (news/funding/feature queries) → direct publisher article URLs; drops own-domain, social, and search-redirect wrappers; LLM relevance-filters + classifies type; pitch list of real outlets. Verified: Notion → TechCrunch/CNBC/Wikipedia real article links.
 - **#4 Domain Analysis citation sources**: replaced hallucinated LLM citations with real_citation_sources() — real TinyFish results across wikipedia/crunchbase/g2/capterra/linkedin/etc + news, brand-relevance filtered. Falls back to LLM+HTTP-verify only if search returns nothing. Verified: citetail.com → real G2/Crunchbase/SourceForge citations.
 - Testing: verified end-to-end via live backend calls (per user request, automated test agent skipped — user tests manually).
+
+## Brand/PR enhancements (2025-07)
+- Brand Consistency now 18 platforms: social (+YouTube, +Reddit), directories (+Tracxn, +GoodFirms, +IndieHackers), reviews (+Gartner).
+- PR Coverage: paginated multi-query TinyFish search (6 queries x 3 pages) -> up to 50 real press items. Filters to real PR only (excludes directories/review/social/reference/app-store via NON_PR_HOSTS). Each item labelled pr_type: "paid" (press-release wires: PRNewswire/BusinessWire/GlobeNewswire/etc) vs "organic" (editorial). Frontend shows paid/organic badge.

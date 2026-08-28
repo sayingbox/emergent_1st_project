@@ -75,7 +75,7 @@ def _headers():
 
 
 async def tf_search(query: str, domain_type: str = "web", max_results: int = 10,
-                    recency_minutes: int = None, purpose: str = None) -> list:
+                    recency_minutes: int = None, purpose: str = None, page: int = None) -> list:
     """Run one TinyFish web/news search. Returns list of result dicts (real URLs)."""
     if not TINYFISH_API_KEY:
         logger.warning("TINYFISH_API_KEY missing")
@@ -87,6 +87,8 @@ async def tf_search(query: str, domain_type: str = "web", max_results: int = 10,
         params["recency_minutes"] = recency_minutes
     if purpose:
         params["purpose"] = purpose
+    if page:
+        params["page"] = page
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             r = await client.get(SEARCH_URL, params=params, headers=_headers())

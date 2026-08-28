@@ -1193,14 +1193,20 @@ BRAND_PLATFORMS = [
     ("Facebook", "social", "facebook.com"),
     ("Instagram", "social", "instagram.com"),
     ("X (Twitter)", "social", "twitter.com"),
+    ("YouTube", "social", "youtube.com"),
+    ("Reddit", "social", "reddit.com"),
     ("Crunchbase", "directories", "crunchbase.com"),
     ("Wellfound", "directories", "wellfound.com"),
     ("AngelList", "directories", "angel.co"),
+    ("Tracxn", "directories", "tracxn.com"),
+    ("GoodFirms", "directories", "goodfirms.co"),
+    ("IndieHackers", "directories", "indiehackers.com"),
     ("G2", "reviews", "g2.com"),
     ("Capterra", "reviews", "capterra.com"),
     ("Clutch", "reviews", "clutch.co"),
     ("Trustpilot", "reviews", "trustpilot.com"),
     ("Product Hunt", "reviews", "producthunt.com"),
+    ("Gartner", "reviews", "gartner.com"),
 ]
 
 
@@ -1329,18 +1335,43 @@ async def pr_coverage(body: PRInput, user: dict = Depends(get_current_user)):
     brand_term = tf.brand_name_from_domain(q) if is_domain else q
     own = tf.root_domain(tf.host_of(q)) if is_domain else None
 
-    # Real press: multiple web searches (direct publisher URLs, not news-redirect wrappers)
-    news, web1, web2 = await asyncio.gather(
-        tf.tf_search(f'{brand_term} news', max_results=12),
-        tf.tf_search(f'"{brand_term}" (funding OR raises OR launch OR announces OR partnership OR acquires)', max_results=10),
-        tf.tf_search(f'"{brand_term}" (review OR interview OR feature OR profile)', max_results=8),
-    )
+    # Real press: several web searches across multiple result pages -> more distinct URLs
+    base_queries = [
+        f'{brand_term} news',
+        f'{brand_term} announcement',
+        f'"{brand_term}" (funding OR raises OR seed OR "series a" OR launch OR announces OR partnership OR acquires)',
+        f'"{brand_term}" (review OR interview OR feature OR profile OR spotlight OR "featured in")',
+        f'"{brand_term}" (press release OR "announced today" OR PRNewswire OR "Business Wire")',
+        f'"{brand_term}" (article OR coverage OR report OR magazine OR editorial)',
+    ]
+    tasks = []
+    for bq in base_queries:
+        for pg in (1, 2, 3):
+            tasks.append(tf.tf_search(bq, max_results=15, page=pg))
+    searches = await asyncio.gather(*tasks)
     REDIRECT_HOSTS = {"google.com", "bing.com", "duckduckgo.com", "news.google.com", "yahoo.com"}
-    SOCIAL_HOSTS = {"reddit.com", "x.com", "twitter.com", "youtube.com", "facebook.com",
-                    "instagram.com", "tiktok.com", "pinterest.com"}
+    # NOT press: directories, review/listing sites, reference, social, community, app stores
+    NON_PR_HOSTS = {
+        "crunchbase.com", "wellfound.com", "angel.co", "tracxn.com", "goodfirms.co", "indiehackers.com",
+        "g2.com", "capterra.com", "clutch.co", "trustpilot.com", "producthunt.com", "gartner.com",
+        "getapp.com", "sourceforge.net", "slashdot.org", "saashub.com", "alternativeto.net", "softwareadvice.com",
+        "glassdoor.com", "ambitionbox.com", "zoominfo.com", "apollo.io", "pitchbook.com", "owler.com",
+        "6sense.com", "similarweb.com", "builtwith.com",
+        "wikipedia.org", "wikidata.org", "fandom.com",
+        "reddit.com", "x.com", "twitter.com", "youtube.com", "facebook.com", "instagram.com",
+        "tiktok.com", "pinterest.com", "linkedin.com", "github.com", "teamblind.com", "quora.com",
+        "stackoverflow.com", "ycombinator.com",
+        "apps.apple.com", "play.google.com", "chrome.google.com",
+    }
+    # Paid PR distribution wires (vs organic editorial coverage)
+    PR_WIRE_HOSTS = {
+        "prnewswire.com", "businesswire.com", "globenewswire.com", "einnews.com", "einpresswire.com",
+        "prweb.com", "accesswire.com", "prlog.org", "openpr.com", "issuewire.com", "newswire.com",
+        "24-7pressrelease.com", "pressat.co.uk", "prunderground.com", "abnewswire.com", "newswirejet.com",
+    }
     brand_slug = _norm_slug(brand_term)
     seen, press = set(), []
-    for src_list, dt in ((news, "news"), (web1, "web"), (web2, "web")):
+    for src_list in searches:
         for r in src_list:
             url = r.get("url", "")
             host = tf.root_domain(tf.host_of(url))
@@ -1348,8 +1379,8 @@ async def pr_coverage(body: PRInput, user: dict = Depends(get_current_user)):
             is_own = (own and host == own) or (brand_slug and first_label == brand_slug)
             if not url or url in seen or is_own:
                 continue
-            if host in REDIRECT_HOSTS or host in SOCIAL_HOSTS or "/goto?" in url or "/url?" in url:
-                continue  # drop own-site, social, and search-redirect wrappers — press = 3rd-party publications
+            if host in REDIRECT_HOSTS or host in NON_PR_HOSTS or "/goto?" in url or "/url?" in url:
+                continue  # keep only real PR: 3rd-party media + press-release wires
             if not _mentions_brand(brand_term, url, r.get("title"), r.get("snippet")):
                 continue
             seen.add(url)
@@ -1358,28 +1389,30 @@ async def pr_coverage(body: PRInput, user: dict = Depends(get_current_user)):
                 "publication_domain": host,
                 "headline": r.get("title"),
                 "description": r.get("snippet"),
-                "url": url, "date": r.get("date"), "type": dt,
+                "url": url, "date": r.get("date"),
+                "type": "news",
+                "pr_type": "paid" if host in PR_WIRE_HOSTS else "organic",
             })
-    press = press[:20]
+    press = press[:50]
 
-    # LLM verifies relevance + classifies type, and builds a real-outlet pitch list.
-    system = """You are a PR analyst. You are given REAL press search results (with real URLs) about a brand. (1) For each result decide if it is genuinely about THIS brand and classify its type. Use ONLY the provided URLs; never invent new ones. (2) Build a media pitch list of real, well-known outlets relevant to this brand, grouped by category. Respond with ONLY valid minified JSON."""
+    # LLM verifies relevance + classifies editorial type, and builds a real-outlet pitch list.
+    system = """You are a PR analyst. You are given REAL press search results (with real URLs) about a brand. (1) For each result decide if it is genuine press coverage of THIS brand (exclude namesakes and non-press pages) and classify its type. Use ONLY the provided URLs; never invent new ones. (2) Build a media pitch list of real, well-known outlets relevant to this brand, grouped by category. Respond with ONLY valid minified JSON."""
     prompt = f"""BRAND: {brand_term}
 
 REAL PRESS RESULTS:
-{json.dumps([{'i': i, 'publication': p['publication'], 'headline': p['headline'], 'snippet': p['description'], 'url': p['url']} for i, p in enumerate(press)])[:9000]}
+{json.dumps([{'i': i, 'publication': p['publication'], 'headline': p['headline'], 'snippet': p['description'], 'url': p['url']} for i, p in enumerate(press)])[:14000]}
 
 Return JSON:
 {{
- "press": [{{"i":<index from the list above>,"relevant":<bool - genuinely about the brand>,"type":"news|feature|review|funding|interview|launch|listing"}}],
+ "press": [{{"i":<index from the list above>,"relevant":<bool - genuine press coverage of the brand>,"type":"news|feature|review|funding|interview|launch|press-release|listicle|podcast"}}],
  "pitch_categories": [
    {{"category":"Tech","outlets":[{{"outlet":"TechCrunch","beat":"startups / product launches","why":"why relevant to this brand","domain":"techcrunch.com"}}]}}
  ]
 }}
-For "press" return one object per index; set relevant=false for namesakes / unrelated results. Provide 4-6 pitch categories with 3-6 real outlets each (real outlet domains)."""
+For "press" return one object PER index above (do not skip indices); set relevant=false only for clear namesakes / non-press pages. Provide 5-7 pitch categories with 4-6 real outlets each (real outlet domains)."""
     llm = {}
     try:
-        llm = await llm_json(system, prompt, f"pr-{user['id']}-{secrets.token_hex(4)}", max_tokens=4000)
+        llm = await llm_json(system, prompt, f"pr-{user['id']}-{secrets.token_hex(4)}", max_tokens=6000)
     except Exception as e:
         logger.warning(f"pr llm failed: {e}")
 
