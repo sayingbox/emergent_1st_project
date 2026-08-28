@@ -2,7 +2,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { http } from "@/lib/api";
-import { LayoutDashboard, Globe, Activity, Link2, MessageSquare, FileText, LogOut, FolderKanban, Heart, Bot } from "lucide-react";
+import { LayoutDashboard, Globe, Activity, Link2, MessageSquare, FileText, LogOut, FolderKanban, Heart, Bot, ShieldCheck, Newspaper } from "lucide-react";
 
 const groups = [
   {
@@ -20,6 +20,8 @@ const groups = [
       { to: "/app/citations", label: "Citation Sources", icon: Link2 },
       { to: "/app/sentiment", label: "Sentiment Analysis", icon: Heart },
       { to: "/app/reddit", label: "Reddit Finder", icon: MessageSquare },
+      { to: "/app/brand", label: "Brand Consistency", icon: ShieldCheck },
+      { to: "/app/pr", label: "PR Coverage", icon: Newspaper },
     ],
   },
   {

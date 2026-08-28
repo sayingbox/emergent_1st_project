@@ -8,6 +8,8 @@ import DomainAnalysis from "@/pages/DomainAnalysis";
 import Visibility from "@/pages/Visibility";
 import Citations from "@/pages/Citations";
 import Reddit from "@/pages/Reddit";
+import BrandConsistency from "@/pages/BrandConsistency";
+import PRCoverage from "@/pages/PRCoverage";
 import SentimentAnalysis from "@/pages/SentimentAnalysis";
 import AiAgent from "@/pages/AiAgent";
 import Optimizer from "@/pages/Dashboard";
@@ -47,6 +49,8 @@ function App() {
             <Route path="/app/citations" element={<Protected><Citations /></Protected>} />
             <Route path="/app/sentiment" element={<Protected><SentimentAnalysis /></Protected>} />
             <Route path="/app/reddit" element={<Protected><Reddit /></Protected>} />
+            <Route path="/app/brand" element={<Protected><BrandConsistency /></Protected>} />
+            <Route path="/app/pr" element={<Protected><PRCoverage /></Protected>} />
             <Route path="/app/optimizer" element={<Protected><Optimizer /></Protected>} />
             <Route path="/app/agent" element={<Protected><AiAgent /></Protected>} />
             <Route path="/app/history" element={<Protected><History /></Protected>} />

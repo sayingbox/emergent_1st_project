@@ -93,3 +93,8 @@ User spec: Domain Analysis must follow a strict crawl-first workflow.
 - **Auth**: premium split screen — dark `#0B0B0F` left panel with emerald radial glow, logo, feature bullets; emerald primary button.
 - **Overview dashboard** (`Overview.js`): emerald hero band with glow + "Analyze a domain" CTA, framer-motion staggered entrance, stat cards with emerald icon chips + tier-coloured values, emerald recharts area (custom tooltip), clean activity list, emerald tools grid.
 - Verified via screenshots (login + dashboard); no console errors. Frontend-only visual change.
+
+## Brand Consistency + PR Coverage (2025-07)
+- **Brand Consistency Checker** (GEO): POST/GET /api/brand. Input brand + optional domain → Claude (claude-sonnet-4-6) returns consistency_score, canonical info, 12 platforms (social/directories/reviews) with name/description/features/pricing/present, inconsistencies (severity), recommendations. Frontend /app/brand with grouped platform cards, favicon logos, past checks.
+- **PR Coverage** (GEO): POST/GET /api/pr. Input brand + optional domain → Claude returns press[] (publication, logo domain, headline, description, url, type) + pitch_categories[] (outlets/beats by category). Frontend /app/pr with two tabs (Press Coverage / Media Pitch List), publication logos via google favicon.
+- Both are LLM-knowledge-based (no live scraping / no extra API keys), following existing visibility/citations/reddit pattern. Sidebar updated under "Generative Engine (GEO)".

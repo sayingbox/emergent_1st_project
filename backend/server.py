@@ -634,6 +634,16 @@ class SentimentInput(BaseModel):
     topic: str
 
 
+class BrandConsistencyInput(BaseModel):
+    brand: str
+    domain: Optional[str] = None
+
+
+class PRInput(BaseModel):
+    brand: str
+    domain: Optional[str] = None
+
+
 class AgentChatInput(BaseModel):
     message: str
     session_id: Optional[str] = None
@@ -1098,6 +1108,79 @@ Provide 5-8 subreddits (ranked by relevance) and 6-10 threads."""
 @api_router.get("/reddit")
 async def reddit_list(user: dict = Depends(get_current_user)):
     docs = await db.reddit.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return docs
+
+
+@api_router.post("/brand")
+async def brand_consistency(body: BrandConsistencyInput, user: dict = Depends(get_current_user)):
+    if not body.brand.strip():
+        raise HTTPException(status_code=400, detail="Brand name is required")
+    system = """You are a brand-presence and AEO/LLM-discovery analyst. Given a brand, you assess how the brand is likely represented across major third-party platforms (social media, startup directories, review sites) based on your knowledge of the brand. You flag inconsistencies in naming, description, features and pricing that would confuse AI/LLM search engines. Respond with ONLY valid minified JSON, no markdown."""
+    prompt = f"""BRAND: {body.brand}{(' (' + body.domain + ')') if body.domain else ''}
+
+Assess the brand's presence and information consistency across these platform groups:
+- social: LinkedIn, Facebook, Instagram, X (Twitter)
+- directories: Crunchbase, Wellfound, AngelList
+- reviews: G2, Capterra, Clutch, Trustpilot, Product Hunt
+
+For each platform, report whether the brand likely has a presence, plus the brand name/handle, company description, listed features and pricing as they would most likely appear there. If a field is unknown or not applicable for a platform, use null. Then identify inconsistencies across platforms (naming, description, feature framing, pricing) and give a consistency score.
+
+Return JSON:
+{{
+ "brand": "{body.brand}",
+ "consistency_score": <0-100 overall info consistency for AI discovery>,
+ "canonical": {{"name":"most likely canonical brand name","description":"1-2 sentence canonical description","category":"e.g. SaaS / project management"}},
+ "platforms": [
+   {{"platform":"LinkedIn","group":"social","present":<bool>,"url":"likely profile URL or null","name":"name/handle as shown or null","description":"description as shown or null","features":["..."],"pricing":"pricing text or null","note":"short observation"}}
+ ],
+ "inconsistencies": [{{"field":"name|description|features|pricing","severity":"high|medium|low","detail":"what differs across which platforms","platforms":["..."]}}],
+ "recommendations": ["how to make brand info consistent and optimized for AI/LLM discovery"]
+}}
+Include ALL 12 platforms listed above in "platforms" (one object each, in group order: social, then directories, then reviews). Provide 3-8 inconsistencies and 4-8 recommendations."""
+    res = await llm_json(system, prompt, f"brand-{user['id']}-{secrets.token_hex(4)}", max_tokens=6000)
+    doc = {"id": secrets.token_hex(12), "user_id": user["id"], "brand": body.brand, "domain": body.domain,
+           "created_at": datetime.now(timezone.utc).isoformat(), **res}
+    await db.brand_consistency.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.get("/brand")
+async def brand_consistency_list(user: dict = Depends(get_current_user)):
+    docs = await db.brand_consistency.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return docs
+
+
+@api_router.post("/pr")
+async def pr_coverage(body: PRInput, user: dict = Depends(get_current_user)):
+    if not body.brand.strip():
+        raise HTTPException(status_code=400, detail="Brand or domain is required")
+    system = """You are a PR and media-relations analyst. Given a brand, you (1) recall likely existing press coverage of the brand from your knowledge, and (2) build a curated media pitch list of relevant outlets and journalist beats the brand could pitch. Respond with ONLY valid minified JSON, no markdown."""
+    prompt = f"""BRAND: {body.brand}{(' (' + body.domain + ')') if body.domain else ''}
+
+Part 1 - PRESS COVERAGE: List existing press mentions/articles about this brand that you are aware of. For each, give the publication name, a headline, a short description, the article URL (best known), and the publication's website domain (used to fetch a logo).
+Part 2 - MEDIA PITCH LIST: Recommend relevant media outlets and journalist beats to pitch, grouped by category (tech, startup, saas, business, industry, etc.).
+
+Return JSON:
+{{
+ "brand": "{body.brand}",
+ "press": [{{"publication":"TechCrunch","publication_domain":"techcrunch.com","headline":"...","description":"1-2 sentences","url":"https://...","date":"approx e.g. 2023 or null","type":"news|feature|review|funding|interview"}}],
+ "pitch_categories": [
+   {{"category":"Tech","outlets":[{{"outlet":"TechCrunch","beat":"startups / product launches","why":"why relevant","domain":"techcrunch.com"}}]}}
+ ]
+}}
+Provide up to 12 press items (empty array if the brand has little or no known coverage - do NOT fabricate obviously fake outlets). Provide 4-6 pitch categories with 3-6 outlets each."""
+    res = await llm_json(system, prompt, f"pr-{user['id']}-{secrets.token_hex(4)}", max_tokens=6000)
+    doc = {"id": secrets.token_hex(12), "user_id": user["id"], "brand": body.brand, "domain": body.domain,
+           "created_at": datetime.now(timezone.utc).isoformat(), **res}
+    await db.pr_coverage.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+@api_router.get("/pr")
+async def pr_coverage_list(user: dict = Depends(get_current_user)):
+    docs = await db.pr_coverage.find({"user_id": user["id"]}, {"_id": 0}).sort("created_at", -1).to_list(200)
     return docs
 
 
