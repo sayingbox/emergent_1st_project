@@ -53,8 +53,10 @@ function PlatformCard({ p }) {
             {p.name ? <div className="text-xs text-muted-foreground truncate">{p.name}</div> : null}
           </div>
         </div>
-        {p.present ? (
+        {p.status === "found" ? (
           <Badge className="rounded-md border bg-green-100 text-green-700 border-green-200 shrink-0"><CheckCircle2 size={12} className="mr-1" />Found</Badge>
+        ) : p.status === "uncertain" ? (
+          <Badge className="rounded-md border bg-amber-100 text-amber-700 border-amber-200 shrink-0">Uncertain</Badge>
         ) : (
           <Badge className="rounded-md border bg-gray-100 text-gray-500 border-gray-200 shrink-0"><XCircle size={12} className="mr-1" />Not found</Badge>
         )}
@@ -69,7 +71,16 @@ function PlatformCard({ p }) {
           )}
           {p.pricing ? <p className="text-xs"><span className="font-semibold">Pricing:</span> {p.pricing}</p> : null}
           {p.note ? <p className="text-[11px] text-muted-foreground italic">{p.note}</p> : null}
-          {p.url ? <a href={p.url} target="_blank" rel="noreferrer" className="text-[11px] text-[#18C090] font-medium inline-flex items-center gap-1 hover:underline">View profile <ExternalLink size={11} /></a> : null}
+          {Array.isArray(p.links) && p.links.length > 0 && (
+            <div className="space-y-1 pt-1 border-t border-border/40 mt-2">
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold pt-1">Live links</div>
+              {p.links.map((l, i) => (
+                <a key={i} href={l.url} target="_blank" rel="noreferrer" className="text-[11px] text-[#18C090] font-medium flex items-center gap-1 hover:underline">
+                  <ExternalLink size={11} className="shrink-0" /> <span className="truncate">{l.url}</span>
+                </a>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </Card>
@@ -77,8 +88,7 @@ function PlatformCard({ p }) {
 }
 
 export default function BrandConsistency() {
-  const [brand, setBrand] = useSessionState("brand:brand", "");
-  const [domain, setDomain] = useSessionState("brand:domain", "");
+  const [query, setQuery] = useSessionState("brand:query", "");
   const initial = getJobState(JOB_KEY);
   const [status, setStatus] = useState(initial.status || "idle");
   const [result, setResult] = useState(initial.result || null);
@@ -99,9 +109,9 @@ export default function BrandConsistency() {
   }, []);
 
   const run = async () => {
-    if (!brand.trim()) { toast.error("Enter a brand name"); return; }
+    if (!query.trim()) { toast.error("Enter a brand name or domain"); return; }
     try {
-      await startSingleShotJob({ key: JOB_KEY, postPath: "/brand", postBody: { brand, domain } });
+      await startSingleShotJob({ key: JOB_KEY, postPath: "/brand", postBody: { query } });
       toast.success("Brand consistency analysed");
     } catch { /* surfaced via subscription */ }
   };
@@ -114,14 +124,10 @@ export default function BrandConsistency() {
       <PageHeader overline="Generative Engine (GEO)" title="Brand Consistency Checker" subtitle="Check how consistently your brand appears across social, startup directories and review sites so AI engines describe you the same way everywhere." />
 
       <Card className="p-6 rounded-xl border-border/60 mb-8">
-        <div className="grid sm:grid-cols-[1fr_1fr_auto] gap-2">
-          <div className="relative">
+        <div className="flex gap-2">
+          <div className="relative flex-1">
             <ShieldCheck size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-            <Input value={brand} onChange={(e) => setBrand(e.target.value)} onKeyDown={(e) => e.key === "Enter" && run()} placeholder="Brand name e.g. Notion" className="pl-9" data-testid="brand-name-input" />
-          </div>
-          <div className="relative">
-            <Globe size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-            <Input value={domain} onChange={(e) => setDomain(e.target.value)} onKeyDown={(e) => e.key === "Enter" && run()} placeholder="Domain (optional) e.g. notion.so" className="pl-9" data-testid="brand-domain-input" />
+            <Input value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Enter" && run()} placeholder="Brand name or domain — e.g. Notion or notion.so" className="pl-9" data-testid="brand-query-input" />
           </div>
           <Button onClick={run} disabled={loading} className="btn-brand hover:opacity-90 shrink-0" data-testid="run-brand-btn">
             {loading ? <Loader2 size={16} className="animate-spin" /> : <><Sparkles size={16} className="mr-2" /> Check</>}

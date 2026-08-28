@@ -26,6 +26,8 @@ from pydantic import BaseModel, EmailStr, Field
 from emergentintegrations.llm.chat import LlmChat, UserMessage
 from urllib.parse import urlparse, urlunparse, urljoin
 
+import tinyfish_client as tf
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -635,12 +637,14 @@ class SentimentInput(BaseModel):
 
 
 class BrandConsistencyInput(BaseModel):
-    brand: str
+    query: Optional[str] = None
+    brand: Optional[str] = None
     domain: Optional[str] = None
 
 
 class PRInput(BaseModel):
-    brand: str
+    query: Optional[str] = None
+    brand: Optional[str] = None
     domain: Optional[str] = None
 
 
@@ -748,6 +752,77 @@ async def verify_live_urls(urls: list) -> dict:
 
     results = await asyncio.gather(*[one(u) for u in urls])
     return {u: ok for u, ok in results}
+
+
+def _norm_slug(s: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+
+
+def _mentions_brand(brand_term: str, *texts) -> bool:
+    """True if the brand (whole slug, or its longest significant token) appears
+    in any of the provided texts. Filters out namesake / unrelated results."""
+    blob = _norm_slug(" ".join([t or "" for t in texts]))
+    if not blob:
+        return False
+    whole = _norm_slug(brand_term)
+    if whole and whole in blob:
+        return True
+    toks = [t for t in (re.sub(r"[^a-z0-9]", "", w.lower()) for w in re.split(r"\s+", brand_term or "")) if len(t) >= 3]
+    if not toks:
+        return bool(whole) and whole in blob
+    longest = max(toks, key=len)
+    return len(longest) >= 3 and longest in blob
+
+
+async def real_citation_sources(brand: str, domain: Optional[str]) -> list:
+    """Find REAL third-party citation sources for a brand via TinyFish search.
+
+    Every URL is a real search-engine result (never model-invented). Used to
+    replace the LLM's hallucinated citation list in domain analysis.
+    """
+    if not tf.TINYFISH_API_KEY or not brand:
+        return []
+    site_queries = [
+        f"{brand} site:wikipedia.org", f"{brand} site:crunchbase.com",
+        f"{brand} site:linkedin.com", f"{brand} site:g2.com",
+        f"{brand} site:capterra.com", f"{brand} site:trustpilot.com",
+        f"{brand} site:producthunt.com", f"{brand} site:youtube.com",
+        f"{brand} site:reddit.com", f"{brand} site:github.com",
+    ]
+    general = [brand, f"{brand} review", f'"{brand}"']
+    web_batches = await tf.tf_search_many(site_queries + general, max_results=3)
+    news = await tf.tf_search(brand, domain_type="news", max_results=6)
+
+    own = tf.root_domain(tf.host_of(domain)) if domain else None
+    seen, cites = set(), []
+
+    def add(r, dt="web"):
+        url = r.get("url", "")
+        host = tf.root_domain(tf.host_of(url))
+        if not url or url in seen or (own and host == own):
+            return
+        if host in ("google.com", "bing.com", "duckduckgo.com", "yahoo.com") or "/goto?" in url or "/url?" in url:
+            return
+        if not _mentions_brand(brand, url, r.get("title"), r.get("snippet")):
+            return
+        seen.add(url)
+        cites.append({
+            "source": r.get("site_name") or host,
+            "url": url,
+            "title": r.get("title"),
+            "type": tf.type_for(url, dt),
+            "authority": tf.authority_for(url),
+            "why": r.get("snippet") or "",
+            "verified": True,
+        })
+
+    for batch in web_batches:
+        for r in batch:
+            add(r, "web")
+    for r in news:
+        add(r, "news")
+    cites.sort(key=lambda c: -c.get("authority", 0))
+    return cites[:50]
 
 
 DOMAIN_SYSTEM = """You are a world-class GEO/AEO (Generative & Answer Engine Optimization) analyst running a strict CRAWL-FIRST analysis.
@@ -908,31 +983,33 @@ async def _run_domain_analysis(job_id: str, user_id: str, domain: str):
         pos_order = {"top": 0, "recommended": 1, "passing": 2}
         ranking_prompts.sort(key=lambda r: pos_order.get(r.get("position"), 3))
 
-        # Citation sources — normalise, then HTTP-verify (drop dead links)
-        raw_cites = []
-        for c in (res.get("citation_sources", []) or []):
-            if not isinstance(c, dict) or not c.get("source"):
-                continue
-            url = str(c.get("url", "")).strip()
-            if url and not url.startswith("http"):
-                url = "https://" + url.lstrip("/")
-            if not url:
-                continue  # cannot verify a source without a URL
-            raw_cites.append({
-                "source": str(c.get("source")).strip(),
-                "url": url,
-                "type": c.get("type", "reference"),
-                "authority": int(c.get("authority", 0) or 0),
-                "why": c.get("why", ""),
-            })
+        # Citation sources — prefer REAL sources from TinyFish live search.
+        # Fall back to LLM-suggested + HTTP-verified only if search yields nothing.
+        citation_sources = await real_citation_sources(res.get("brand") or domain, domain)
+        if not citation_sources:
+            raw_cites = []
+            for c in (res.get("citation_sources", []) or []):
+                if not isinstance(c, dict) or not c.get("source"):
+                    continue
+                url = str(c.get("url", "")).strip()
+                if url and not url.startswith("http"):
+                    url = "https://" + url.lstrip("/")
+                if not url:
+                    continue  # cannot verify a source without a URL
+                raw_cites.append({
+                    "source": str(c.get("source")).strip(),
+                    "url": url,
+                    "type": c.get("type", "reference"),
+                    "authority": int(c.get("authority", 0) or 0),
+                    "why": c.get("why", ""),
+                })
 
-        liveness = await verify_live_urls(list({c["url"] for c in raw_cites}))
-        citation_sources = []
-        for c in raw_cites:
-            if liveness.get(c["url"]):
-                c["verified"] = True
-                citation_sources.append(c)
-        citation_sources.sort(key=lambda c: -c.get("authority", 0))
+            liveness = await verify_live_urls(list({c["url"] for c in raw_cites}))
+            for c in raw_cites:
+                if liveness.get(c["url"]):
+                    c["verified"] = True
+                    citation_sources.append(c)
+            citation_sources.sort(key=lambda c: -c.get("authority", 0))
 
         # Competitors (crawl/topic grounded) — support dict or plain string
         competitors = []
@@ -948,7 +1025,7 @@ async def _run_domain_analysis(job_id: str, user_id: str, domain: str):
 
         metrics = res.get("metrics", {}) or {}
         result = {
-            "data_source": "Crawl-first (live site crawl) + AI analysis (Claude Sonnet 4.6). Citation URLs HTTP-verified live.",
+            "data_source": "Crawl-first (live site crawl) + AI analysis (Claude Sonnet 4.6). Citation sources from TinyFish live web search (real URLs).",
             "brand": res.get("brand") or domain,
             "brand_summary": res.get("brand_summary", ""),
             "ai_readiness_score": int(res.get("ai_readiness_score", 0) or 0),
@@ -1111,35 +1188,127 @@ async def reddit_list(user: dict = Depends(get_current_user)):
     return docs
 
 
+BRAND_PLATFORMS = [
+    ("LinkedIn", "social", "linkedin.com"),
+    ("Facebook", "social", "facebook.com"),
+    ("Instagram", "social", "instagram.com"),
+    ("X (Twitter)", "social", "twitter.com"),
+    ("Crunchbase", "directories", "crunchbase.com"),
+    ("Wellfound", "directories", "wellfound.com"),
+    ("AngelList", "directories", "angel.co"),
+    ("G2", "reviews", "g2.com"),
+    ("Capterra", "reviews", "capterra.com"),
+    ("Clutch", "reviews", "clutch.co"),
+    ("Trustpilot", "reviews", "trustpilot.com"),
+    ("Product Hunt", "reviews", "producthunt.com"),
+]
+
+
 @api_router.post("/brand")
 async def brand_consistency(body: BrandConsistencyInput, user: dict = Depends(get_current_user)):
-    if not body.brand.strip():
-        raise HTTPException(status_code=400, detail="Brand name is required")
-    system = """You are a brand-presence and AEO/LLM-discovery analyst. Given a brand, you assess how the brand is likely represented across major third-party platforms (social media, startup directories, review sites) based on your knowledge of the brand. You flag inconsistencies in naming, description, features and pricing that would confuse AI/LLM search engines. Respond with ONLY valid minified JSON, no markdown."""
-    prompt = f"""BRAND: {body.brand}{(' (' + body.domain + ')') if body.domain else ''}
+    q = (body.query or body.brand or body.domain or "").strip()
+    if not q:
+        raise HTTPException(status_code=400, detail="Enter a brand name or domain")
 
-Assess the brand's presence and information consistency across these platform groups:
-- social: LinkedIn, Facebook, Instagram, X (Twitter)
-- directories: Crunchbase, Wellfound, AngelList
-- reviews: G2, Capterra, Clutch, Trustpilot, Product Hunt
+    is_domain = tf.looks_like_domain(q)
+    brand_term = tf.brand_name_from_domain(q) if is_domain else q
+    domain_host = tf.root_domain(tf.host_of(q)) if is_domain else None
 
-For each platform, report whether the brand likely has a presence, plus the brand name/handle, company description, listed features and pricing as they would most likely appear there. If a field is unknown or not applicable for a platform, use null. Then identify inconsistencies across platforms (naming, description, feature framing, pricing) and give a consistency score.
+    # 1) Real per-platform searches (concurrent) -> real, verifiable listing URLs
+    queries = [f"{brand_term} site:{site}" for (_, _, site) in BRAND_PLATFORMS]
+    per_platform = await tf.tf_search_many(queries, max_results=4)
+
+    platforms, evidence_for_llm = [], []
+    for (name, group, site), results in zip(BRAND_PLATFORMS, per_platform):
+        matched = [r for r in results if tf.root_domain(tf.host_of(r.get("url", ""))) == site]
+        # X profiles may live on x.com even when we searched twitter.com
+        if name.startswith("X ") and not matched:
+            matched = [r for r in results if tf.root_domain(tf.host_of(r.get("url", ""))) in ("x.com", "twitter.com")]
+        # keep only results that actually reference the brand (drop namesakes/unrelated)
+        matched = [r for r in matched if _mentions_brand(brand_term, r.get("url", ""), r.get("title", ""))]
+        links = [{"title": r.get("title"), "url": r.get("url"), "snippet": r.get("snippet")} for r in matched[:3]]
+        top = links[0] if links else None
+        platforms.append({
+            "platform": name, "group": group, "present": bool(links),
+            "url": top["url"] if top else None,
+            "name": top["title"] if top else None,
+            "description": top["snippet"] if top else None,
+            "links": links, "features": [], "pricing": None, "note": "",
+        })
+        if links:
+            evidence_for_llm.append({"platform": name, "results": links})
+
+    # 2) Fetch the brand's own site (real) for canonical info
+    home_url, home_text = None, ""
+    if is_domain:
+        home_url = f"https://{q}"
+    else:
+        web = await tf.tf_search(brand_term, max_results=5)
+        if web:
+            home_url = web[0].get("url")
+            domain_host = tf.root_domain(tf.host_of(home_url))
+    if home_url:
+        fetched = await tf.tf_fetch([home_url], ttl=86400)
+        rr = fetched.get("results") or []
+        if rr:
+            home_text = (rr[0].get("text") or "")[:5000]
+
+    # 3) LLM structures canonical + per-platform features/pricing + inconsistencies
+    #    from the REAL evidence only (never invents URLs)
+    system = """You analyse brand-information CONSISTENCY across third-party platforms for AI/LLM discovery. You are given REAL search snippets and the brand's own website text. Use ONLY the provided evidence. Do NOT invent URLs, platforms, or facts not supported by the evidence. Respond with ONLY valid minified JSON."""
+    prompt = f"""BRAND: {brand_term}{f' (domain: {domain_host})' if domain_host else ''}
+
+BRAND WEBSITE TEXT (truncated):
+\"\"\"{home_text}\"\"\"
+
+REAL PLATFORM EVIDENCE (search snippets found on each platform):
+{json.dumps(evidence_for_llm)[:9000]}
 
 Return JSON:
 {{
- "brand": "{body.brand}",
- "consistency_score": <0-100 overall info consistency for AI discovery>,
- "canonical": {{"name":"most likely canonical brand name","description":"1-2 sentence canonical description","category":"e.g. SaaS / project management"}},
- "platforms": [
-   {{"platform":"LinkedIn","group":"social","present":<bool>,"url":"likely profile URL or null","name":"name/handle as shown or null","description":"description as shown or null","features":["..."],"pricing":"pricing text or null","note":"short observation"}}
+ "canonical": {{"name":"canonical brand name from evidence","description":"1-2 sentence description grounded in the website text","category":"e.g. SaaS / project management"}},
+ "consistency_score": <0-100: how consistent the brand's name/description/positioning is across the platforms found>,
+ "platform_analysis": [
+   {{"platform":"<one of the platforms present in the evidence>","present_confidence":"found|uncertain","features":["features mentioned in that platform's snippet, if any"],"pricing":"pricing text if present in snippet else null","note":"short note on how this listing describes the brand / any mismatch"}}
  ],
- "inconsistencies": [{{"field":"name|description|features|pricing","severity":"high|medium|low","detail":"what differs across which platforms","platforms":["..."]}}],
- "recommendations": ["how to make brand info consistent and optimized for AI/LLM discovery"]
+ "inconsistencies": [{{"field":"name|description|features|pricing|category","severity":"high|medium|low","detail":"what differs across which platforms","platforms":["..."]}}],
+ "recommendations": ["how to make brand info consistent and optimised for AI/LLM discovery"]
 }}
-Include ALL 12 platforms listed above in "platforms" (one object each, in group order: social, then directories, then reviews). Provide 3-8 inconsistencies and 4-8 recommendations."""
-    res = await llm_json(system, prompt, f"brand-{user['id']}-{secrets.token_hex(4)}", max_tokens=6000)
-    doc = {"id": secrets.token_hex(12), "user_id": user["id"], "brand": body.brand, "domain": body.domain,
-           "created_at": datetime.now(timezone.utc).isoformat(), **res}
+Only include platforms in platform_analysis that appear in the evidence. Provide up to 8 inconsistencies and 4-8 recommendations. If evidence is sparse, give a lower consistency_score and note it in a recommendation."""
+    llm = {}
+    try:
+        llm = await llm_json(system, prompt, f"brand-{user['id']}-{secrets.token_hex(4)}", max_tokens=4000)
+    except Exception as e:
+        logger.warning(f"brand llm structuring failed: {e}")
+
+    by_platform = {p["platform"]: p for p in platforms}
+    for pa in (llm.get("platform_analysis") or []):
+        tgt = by_platform.get(pa.get("platform"))
+        if not tgt:
+            continue
+        if isinstance(pa.get("features"), list):
+            tgt["features"] = [str(x) for x in pa["features"]][:8]
+        if pa.get("pricing"):
+            tgt["pricing"] = pa["pricing"]
+        if pa.get("note"):
+            tgt["note"] = pa["note"]
+        tgt["status"] = "uncertain" if (pa.get("present_confidence") == "uncertain" and tgt["present"]) else ("found" if tgt["present"] else "not_found")
+    for p in platforms:
+        p.setdefault("status", "found" if p["present"] else "not_found")
+
+    canonical = llm.get("canonical") or {"name": brand_term, "description": "", "category": ""}
+    doc = {
+        "id": secrets.token_hex(12), "user_id": user["id"],
+        "query": q, "brand": canonical.get("name") or brand_term, "domain": domain_host,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "data_source": "TinyFish live web search (real listing URLs) + AI structuring",
+        "consistency_score": int(llm.get("consistency_score", 0) or 0),
+        "canonical": canonical,
+        "platforms": platforms,
+        "found_count": sum(1 for p in platforms if p["present"]),
+        "inconsistencies": [x for x in (llm.get("inconsistencies") or []) if isinstance(x, dict)],
+        "recommendations": [x for x in (llm.get("recommendations") or []) if isinstance(x, str)],
+    }
     await db.brand_consistency.insert_one(doc)
     doc.pop("_id", None)
     return doc
@@ -1153,26 +1322,86 @@ async def brand_consistency_list(user: dict = Depends(get_current_user)):
 
 @api_router.post("/pr")
 async def pr_coverage(body: PRInput, user: dict = Depends(get_current_user)):
-    if not body.brand.strip():
-        raise HTTPException(status_code=400, detail="Brand or domain is required")
-    system = """You are a PR and media-relations analyst. Given a brand, you (1) recall likely existing press coverage of the brand from your knowledge, and (2) build a curated media pitch list of relevant outlets and journalist beats the brand could pitch. Respond with ONLY valid minified JSON, no markdown."""
-    prompt = f"""BRAND: {body.brand}{(' (' + body.domain + ')') if body.domain else ''}
+    q = (body.query or body.brand or body.domain or "").strip()
+    if not q:
+        raise HTTPException(status_code=400, detail="Enter a brand name or domain")
+    is_domain = tf.looks_like_domain(q)
+    brand_term = tf.brand_name_from_domain(q) if is_domain else q
+    own = tf.root_domain(tf.host_of(q)) if is_domain else None
 
-Part 1 - PRESS COVERAGE: List existing press mentions/articles about this brand that you are aware of. For each, give the publication name, a headline, a short description, the article URL (best known), and the publication's website domain (used to fetch a logo).
-Part 2 - MEDIA PITCH LIST: Recommend relevant media outlets and journalist beats to pitch, grouped by category (tech, startup, saas, business, industry, etc.).
+    # Real press: multiple web searches (direct publisher URLs, not news-redirect wrappers)
+    news, web1, web2 = await asyncio.gather(
+        tf.tf_search(f'{brand_term} news', max_results=12),
+        tf.tf_search(f'"{brand_term}" (funding OR raises OR launch OR announces OR partnership OR acquires)', max_results=10),
+        tf.tf_search(f'"{brand_term}" (review OR interview OR feature OR profile)', max_results=8),
+    )
+    REDIRECT_HOSTS = {"google.com", "bing.com", "duckduckgo.com", "news.google.com", "yahoo.com"}
+    SOCIAL_HOSTS = {"reddit.com", "x.com", "twitter.com", "youtube.com", "facebook.com",
+                    "instagram.com", "tiktok.com", "pinterest.com"}
+    brand_slug = _norm_slug(brand_term)
+    seen, press = set(), []
+    for src_list, dt in ((news, "news"), (web1, "web"), (web2, "web")):
+        for r in src_list:
+            url = r.get("url", "")
+            host = tf.root_domain(tf.host_of(url))
+            first_label = host.split(".")[0] if host else ""
+            is_own = (own and host == own) or (brand_slug and first_label == brand_slug)
+            if not url or url in seen or is_own:
+                continue
+            if host in REDIRECT_HOSTS or host in SOCIAL_HOSTS or "/goto?" in url or "/url?" in url:
+                continue  # drop own-site, social, and search-redirect wrappers — press = 3rd-party publications
+            if not _mentions_brand(brand_term, url, r.get("title"), r.get("snippet")):
+                continue
+            seen.add(url)
+            press.append({
+                "publication": r.get("site_name") or host,
+                "publication_domain": host,
+                "headline": r.get("title"),
+                "description": r.get("snippet"),
+                "url": url, "date": r.get("date"), "type": dt,
+            })
+    press = press[:20]
+
+    # LLM verifies relevance + classifies type, and builds a real-outlet pitch list.
+    system = """You are a PR analyst. You are given REAL press search results (with real URLs) about a brand. (1) For each result decide if it is genuinely about THIS brand and classify its type. Use ONLY the provided URLs; never invent new ones. (2) Build a media pitch list of real, well-known outlets relevant to this brand, grouped by category. Respond with ONLY valid minified JSON."""
+    prompt = f"""BRAND: {brand_term}
+
+REAL PRESS RESULTS:
+{json.dumps([{'i': i, 'publication': p['publication'], 'headline': p['headline'], 'snippet': p['description'], 'url': p['url']} for i, p in enumerate(press)])[:9000]}
 
 Return JSON:
 {{
- "brand": "{body.brand}",
- "press": [{{"publication":"TechCrunch","publication_domain":"techcrunch.com","headline":"...","description":"1-2 sentences","url":"https://...","date":"approx e.g. 2023 or null","type":"news|feature|review|funding|interview"}}],
+ "press": [{{"i":<index from the list above>,"relevant":<bool - genuinely about the brand>,"type":"news|feature|review|funding|interview|launch|listing"}}],
  "pitch_categories": [
-   {{"category":"Tech","outlets":[{{"outlet":"TechCrunch","beat":"startups / product launches","why":"why relevant","domain":"techcrunch.com"}}]}}
+   {{"category":"Tech","outlets":[{{"outlet":"TechCrunch","beat":"startups / product launches","why":"why relevant to this brand","domain":"techcrunch.com"}}]}}
  ]
 }}
-Provide up to 12 press items (empty array if the brand has little or no known coverage - do NOT fabricate obviously fake outlets). Provide 4-6 pitch categories with 3-6 outlets each."""
-    res = await llm_json(system, prompt, f"pr-{user['id']}-{secrets.token_hex(4)}", max_tokens=6000)
-    doc = {"id": secrets.token_hex(12), "user_id": user["id"], "brand": body.brand, "domain": body.domain,
-           "created_at": datetime.now(timezone.utc).isoformat(), **res}
+For "press" return one object per index; set relevant=false for namesakes / unrelated results. Provide 4-6 pitch categories with 3-6 real outlets each (real outlet domains)."""
+    llm = {}
+    try:
+        llm = await llm_json(system, prompt, f"pr-{user['id']}-{secrets.token_hex(4)}", max_tokens=4000)
+    except Exception as e:
+        logger.warning(f"pr llm failed: {e}")
+
+    verdicts = {v.get("i"): v for v in (llm.get("press") or []) if isinstance(v, dict)}
+    final_press = []
+    for i, p in enumerate(press):
+        v = verdicts.get(i)
+        if v is not None and v.get("relevant") is False:
+            continue
+        if v and v.get("type"):
+            p["type"] = v["type"]
+        final_press.append(p)
+
+    pitch = [c for c in (llm.get("pitch_categories") or []) if isinstance(c, dict) and c.get("outlets")]
+    doc = {
+        "id": secrets.token_hex(12), "user_id": user["id"],
+        "query": q, "brand": brand_term, "domain": own,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "data_source": "TinyFish live news/web search (real article URLs) + AI relevance filter",
+        "press": final_press,
+        "pitch_categories": pitch,
+    }
     await db.pr_coverage.insert_one(doc)
     doc.pop("_id", None)
     return doc

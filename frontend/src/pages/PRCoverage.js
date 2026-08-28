@@ -13,7 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { PageHeader, EmptyState } from "@/components/ui-bits";
-import { Newspaper, Loader2, Sparkles, Globe, ExternalLink, Send, Megaphone } from "lucide-react";
+import { Newspaper, Loader2, Sparkles, ExternalLink, Send, Megaphone } from "lucide-react";
 import { toast } from "sonner";
 
 const JOB_KEY = "pr";
@@ -31,8 +31,7 @@ function logoFor(domain) {
 }
 
 export default function PRCoverage() {
-  const [brand, setBrand] = useSessionState("pr:brand", "");
-  const [domain, setDomain] = useSessionState("pr:domain", "");
+  const [query, setQuery] = useSessionState("pr:query", "");
   const initial = getJobState(JOB_KEY);
   const [status, setStatus] = useState(initial.status || "idle");
   const [result, setResult] = useState(initial.result || null);
@@ -53,9 +52,9 @@ export default function PRCoverage() {
   }, []);
 
   const run = async () => {
-    if (!brand.trim()) { toast.error("Enter a brand or domain"); return; }
+    if (!query.trim()) { toast.error("Enter a brand or domain"); return; }
     try {
-      await startSingleShotJob({ key: JOB_KEY, postPath: "/pr", postBody: { brand, domain } });
+      await startSingleShotJob({ key: JOB_KEY, postPath: "/pr", postBody: { query } });
       toast.success("PR coverage generated");
     } catch { /* surfaced via subscription */ }
   };
@@ -69,14 +68,10 @@ export default function PRCoverage() {
       <PageHeader overline="Generative Engine (GEO)" title="PR Coverage" subtitle="See existing press mentions and a curated media pitch list — earned media is heavily cited by AI answer engines." />
 
       <Card className="p-6 rounded-xl border-border/60 mb-8">
-        <div className="grid sm:grid-cols-[1fr_1fr_auto] gap-2">
-          <div className="relative">
+        <div className="flex gap-2">
+          <div className="relative flex-1">
             <Newspaper size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-            <Input value={brand} onChange={(e) => setBrand(e.target.value)} onKeyDown={(e) => e.key === "Enter" && run()} placeholder="Brand name e.g. Notion" className="pl-9" data-testid="pr-brand-input" />
-          </div>
-          <div className="relative">
-            <Globe size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-            <Input value={domain} onChange={(e) => setDomain(e.target.value)} onKeyDown={(e) => e.key === "Enter" && run()} placeholder="Domain (optional) e.g. notion.so" className="pl-9" data-testid="pr-domain-input" />
+            <Input value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Enter" && run()} placeholder="Brand name or domain — e.g. Notion or notion.so" className="pl-9" data-testid="pr-query-input" />
           </div>
           <Button onClick={run} disabled={loading} className="btn-brand hover:opacity-90 shrink-0" data-testid="run-pr-btn">
             {loading ? <Loader2 size={16} className="animate-spin" /> : <><Sparkles size={16} className="mr-2" /> Generate</>}
