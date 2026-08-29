@@ -1,5 +1,5 @@
-@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;700;800&display=swap');
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap');
 
 @tailwind base;
@@ -8,16 +8,17 @@
 
 body {
     margin: 0;
-    font-family: 'IBM Plex Sans', sans-serif;
+    font-family: 'Inter', 'IBM Plex Sans', sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     background: #FFFFFF;
-    color: #09090B;
+    color: #0B1120;
+    letter-spacing: -0.005em;
 }
 
 h1, h2, h3, h4, .font-head {
     font-family: 'Manrope', sans-serif;
-    letter-spacing: -0.015em;
+    letter-spacing: -0.021em;
 }
 
 .font-mono, code, pre {
@@ -27,55 +28,56 @@ h1, h2, h3, h4, .font-head {
 @layer base {
     :root {
         --background: 0 0% 100%;
-        --foreground: 240 10% 4%;
+        --foreground: 222 47% 11%;
         --card: 0 0% 100%;
-        --card-foreground: 240 10% 4%;
+        --card-foreground: 222 47% 11%;
         --popover: 0 0% 100%;
-        --popover-foreground: 240 10% 4%;
-        --primary: 0 0% 0%;
+        --popover-foreground: 222 47% 11%;
+        --primary: 243 75% 59%;
         --primary-foreground: 0 0% 100%;
-        --secondary: 220 14% 96%;
-        --secondary-foreground: 0 0% 9%;
-        --muted: 220 14% 96%;
+        --secondary: 220 16% 96%;
+        --secondary-foreground: 222 47% 11%;
+        --muted: 220 16% 96%;
         --muted-foreground: 220 9% 46%;
-        --accent: 158 78% 43%;
+        --accent: 239 84% 67%;
         --accent-foreground: 0 0% 100%;
         --destructive: 0 72% 51%;
         --destructive-foreground: 0 0% 98%;
-        --border: 220 13% 91%;
-        --input: 220 13% 91%;
-        --ring: 158 78% 43%;
-        --radius: 0.625rem;
+        --border: 220 14% 91%;
+        --input: 220 14% 91%;
+        --ring: 239 84% 67%;
+        --radius: 0.7rem;
 
-        /* Brand palette */
-        --brand-500: #18C090;
-        --brand-400: #34d1a3;
-        --brand-600: #0EA575;
-        --brand-glow: 24 192 144;
-        --violet-500: #7C5CFF;
+        /* Premium accent palette — electric indigo / violet / blue */
+        --brand-500: #6366F1;
+        --brand-400: #818CF8;
+        --brand-600: #4F46E5;
+        --brand-glow: 99 102 241;
+        --violet-500: #8B5CF6;
+        --blue-500: #4F7DFF;
         --amber-500: #F5B342;
         --pink-500: #FF6BA1;
     }
     .dark {
-        --background: 240 10% 4%;
+        --background: 222 47% 6%;
         --foreground: 0 0% 98%;
-        --card: 240 6% 8%;
+        --card: 222 40% 9%;
         --card-foreground: 0 0% 98%;
-        --popover: 240 6% 8%;
+        --popover: 222 40% 9%;
         --popover-foreground: 0 0% 98%;
-        --primary: 0 0% 98%;
-        --primary-foreground: 0 0% 9%;
-        --secondary: 240 4% 14%;
+        --primary: 239 84% 67%;
+        --primary-foreground: 0 0% 100%;
+        --secondary: 222 30% 15%;
         --secondary-foreground: 0 0% 98%;
-        --muted: 240 4% 14%;
-        --muted-foreground: 240 5% 65%;
-        --accent: 158 78% 55%;
+        --muted: 222 30% 15%;
+        --muted-foreground: 220 12% 65%;
+        --accent: 239 84% 67%;
         --accent-foreground: 0 0% 100%;
         --destructive: 0 62% 45%;
         --destructive-foreground: 0 0% 98%;
-        --border: 240 4% 16%;
-        --input: 240 4% 16%;
-        --ring: 158 78% 55%;
+        --border: 222 25% 18%;
+        --input: 222 25% 18%;
+        --ring: 239 84% 67%;
     }
 }
 
@@ -88,11 +90,11 @@ h1, h2, h3, h4, .font-head {
    Ambient page background — layered radial gradients for depth
    ================================================================== */
 .app-bg {
-    background-color: #fafbfc;
+    background-color: #fafbff;
     background-image:
-        radial-gradient(1200px circle at 8% -5%,  rgba(24, 192, 144, 0.10) 0%, transparent 45%),
-        radial-gradient(900px  circle at 105% 15%, rgba(124, 92, 255, 0.08) 0%, transparent 45%),
-        radial-gradient(1000px circle at 50% 105%, rgba(245, 179, 66, 0.05) 0%, transparent 50%);
+        radial-gradient(1200px circle at 6% -8%,  rgba(99, 102, 241, 0.10) 0%, transparent 46%),
+        radial-gradient(900px  circle at 106% 12%, rgba(139, 92, 246, 0.09) 0%, transparent 46%),
+        radial-gradient(1000px circle at 50% 108%, rgba(79, 125, 255, 0.05) 0%, transparent 52%);
     background-attachment: fixed;
 }
 
@@ -111,10 +113,10 @@ h1, h2, h3, h4, .font-head {
 }
 
 /* ==================================================================
-   Gradient text — reusable
+   Gradient text — reusable (violet -> indigo -> electric blue)
    ================================================================== */
 .gradient-text {
-    background: linear-gradient(90deg, #18C090 0%, #34d1a3 40%, #7C5CFF 100%);
+    background: linear-gradient(90deg, #6366F1 0%, #8B5CF6 45%, #4F7DFF 100%);
     -webkit-background-clip: text;
     background-clip: text;
     -webkit-text-fill-color: transparent;
@@ -132,27 +134,27 @@ h1, h2, h3, h4, .font-head {
    Cards + surfaces
    ================================================================== */
 .card-hover {
-    transition: transform 200ms ease, box-shadow 200ms ease, border-color 200ms ease;
+    transition: transform 220ms cubic-bezier(.22,1,.36,1), box-shadow 220ms ease, border-color 220ms ease;
 }
 .card-hover:hover {
-    transform: translateY(-2px);
+    transform: translateY(-3px);
     box-shadow:
         0 1px 2px rgba(15, 23, 42, 0.04),
-        0 8px 24px -8px rgba(15, 23, 42, 0.10),
-        0 0 0 1px rgba(24, 192, 144, 0.10);
-    border-color: rgba(24, 192, 144, 0.35);
+        0 12px 34px -10px rgba(79, 70, 229, 0.22),
+        0 0 0 1px rgba(99, 102, 241, 0.14);
+    border-color: rgba(99, 102, 241, 0.40);
 }
 
 .soft-shadow {
     box-shadow:
         0 1px 2px rgba(15, 23, 42, 0.04),
-        0 6px 20px -8px rgba(15, 23, 42, 0.08);
+        0 8px 24px -10px rgba(30, 41, 59, 0.10);
 }
 
 /* Elevated hero card with subtle inner gradient */
 .hero-card {
     background:
-        linear-gradient(135deg, rgba(24, 192, 144, 0.05) 0%, rgba(124, 92, 255, 0.04) 100%),
+        linear-gradient(135deg, rgba(99, 102, 241, 0.06) 0%, rgba(139, 92, 246, 0.05) 100%),
         hsl(var(--card));
     border: 1px solid hsl(var(--border));
     position: relative;
@@ -162,7 +164,7 @@ h1, h2, h3, h4, .font-head {
     content: "";
     position: absolute;
     inset: 0;
-    background: radial-gradient(600px circle at 100% 0%, rgba(24, 192, 144, 0.10) 0%, transparent 50%);
+    background: radial-gradient(600px circle at 100% 0%, rgba(99, 102, 241, 0.12) 0%, transparent 50%);
     pointer-events: none;
 }
 
@@ -178,7 +180,7 @@ h1, h2, h3, h4, .font-head {
     inset: 0;
     padding: 1px;
     border-radius: inherit;
-    background: linear-gradient(135deg, #18C090, #7C5CFF);
+    background: linear-gradient(135deg, #6366F1, #8B5CF6);
     -webkit-mask:
         linear-gradient(#fff 0 0) content-box,
         linear-gradient(#fff 0 0);
@@ -191,25 +193,26 @@ h1, h2, h3, h4, .font-head {
    Buttons — subtle micro-polish
    ================================================================== */
 button {
-    transition: transform 150ms ease, background-color 150ms ease, box-shadow 200ms ease, opacity 150ms ease;
+    transition: transform 160ms cubic-bezier(.22,1,.36,1), background-color 160ms ease, box-shadow 220ms ease, opacity 150ms ease;
 }
 button:active:not(:disabled) {
     transform: translateY(0.5px) scale(0.995);
 }
 
-/* A "primary-brand" button variant */
+/* A "primary-brand" button variant (electric violet -> blue) */
 .btn-brand {
-    background: linear-gradient(135deg, #18C090 0%, #0EA575 100%);
+    background: linear-gradient(135deg, #6D5EFC 0%, #4F7DFF 100%);
     color: white;
     box-shadow:
-        0 1px 2px rgba(14, 165, 117, 0.25),
-        0 8px 24px -8px rgba(24, 192, 144, 0.45);
+        0 1px 2px rgba(79, 70, 229, 0.25),
+        0 10px 26px -8px rgba(99, 102, 241, 0.50);
 }
 .btn-brand:hover:not(:disabled) {
-    background: linear-gradient(135deg, #1ecc9a 0%, #12b581 100%);
+    background: linear-gradient(135deg, #7d70ff 0%, #5f88ff 100%);
+    transform: translateY(-1px);
     box-shadow:
-        0 1px 2px rgba(14, 165, 117, 0.3),
-        0 12px 28px -8px rgba(24, 192, 144, 0.55);
+        0 1px 2px rgba(79, 70, 229, 0.30),
+        0 16px 32px -8px rgba(99, 102, 241, 0.60);
 }
 
 /* ==================================================================
@@ -221,19 +224,19 @@ button:active:not(:disabled) {
     gap: 0.4rem;
     padding: 0.25rem 0.7rem;
     font-size: 10px;
-    letter-spacing: 0.24em;
+    letter-spacing: 0.22em;
     text-transform: uppercase;
     font-weight: 700;
-    color: #0EA575;
-    background: rgba(24, 192, 144, 0.10);
-    border: 1px solid rgba(24, 192, 144, 0.20);
+    color: #4F46E5;
+    background: rgba(99, 102, 241, 0.10);
+    border: 1px solid rgba(99, 102, 241, 0.22);
     border-radius: 999px;
 }
 .overline-chip::before {
     content: "";
     width: 6px; height: 6px; border-radius: 999px;
-    background: #18C090;
-    box-shadow: 0 0 0 3px rgba(24, 192, 144, 0.20);
+    background: #6366F1;
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.20);
 }
 
 /* Divider that fades to nothing */
@@ -247,14 +250,14 @@ button:active:not(:disabled) {
    ================================================================== */
 .nav-active-glow {
     position: relative;
-    background: linear-gradient(90deg, rgba(24, 192, 144, 0.15) 0%, rgba(24, 192, 144, 0.02) 100%);
-    box-shadow: inset 2px 0 0 #18C090, 0 0 24px -6px rgba(24, 192, 144, 0.40);
+    background: linear-gradient(90deg, rgba(99, 102, 241, 0.22) 0%, rgba(99, 102, 241, 0.04) 100%);
+    box-shadow: inset 2px 0 0 #818CF8, 0 0 26px -6px rgba(99, 102, 241, 0.55);
     color: #ffffff;
 }
 
 .sidebar-avatar {
-    background: linear-gradient(135deg, #18C090 0%, #0EA575 100%);
-    box-shadow: 0 0 0 2px rgba(24, 192, 144, 0.25);
+    background: linear-gradient(135deg, #6D5EFC 0%, #4F7DFF 100%);
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.30);
 }
 
 /* ==================================================================
@@ -272,7 +275,7 @@ button:active:not(:disabled) {
 }
 
 /* ==================================================================
-   Utility: gentle pulse for "processing" badges
+   Micro-animations
    ================================================================== */
 @keyframes soft-pulse {
     0%, 100% { opacity: 1; }
@@ -280,22 +283,38 @@ button:active:not(:disabled) {
 }
 .pulse-slow { animation: soft-pulse 2.2s ease-in-out infinite; }
 
+@keyframes fade-in-up {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+.animate-rise { animation: fade-in-up 0.45s cubic-bezier(.22,1,.36,1) both; }
+
+@keyframes float-sheen {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+}
+
 /* ==================================================================
-   Sidebar rail — extra depth
+   Sidebar rail — deep navy / slate with subtle indigo+violet glow
    ================================================================== */
 .sidebar-rail {
     background:
-        radial-gradient(600px circle at 0% 0%, rgba(24, 192, 144, 0.10) 0%, transparent 40%),
-        radial-gradient(500px circle at 100% 100%, rgba(124, 92, 255, 0.08) 0%, transparent 40%),
-        #0b0b0f;
+        radial-gradient(620px circle at 0% 0%, rgba(99, 102, 241, 0.16) 0%, transparent 42%),
+        radial-gradient(520px circle at 100% 100%, rgba(139, 92, 246, 0.12) 0%, transparent 42%),
+        linear-gradient(180deg, #0F1B33 0%, #0B1424 55%, #0A1120 100%);
 }
 
 /* Focus ring polish */
 input:focus-visible, textarea:focus-visible, select:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 3px rgba(24, 192, 144, 0.20);
-    border-color: rgba(24, 192, 144, 0.55) !important;
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.22);
+    border-color: rgba(99, 102, 241, 0.58) !important;
 }
+
+/* Prettier scrollbars */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: rgba(100, 116, 139, 0.32); border-radius: 999px; border: 2px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar-thumb:hover { background: rgba(99, 102, 241, 0.45); background-clip: content-box; }
 
 /* Smooth scroll */
 html { scroll-behavior: smooth; }

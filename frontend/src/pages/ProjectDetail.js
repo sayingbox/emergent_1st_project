@@ -238,7 +238,7 @@ export default function ProjectDetail() {
                         </div>
                       )}
                       <div className="mt-4">
-                        <a href={p.url} target="_blank" rel="noopener noreferrer" className="text-xs text-[#18C090] inline-flex items-center gap-1 hover:underline">
+                        <a href={p.url} target="_blank" rel="noopener noreferrer" className="text-xs text-[#6366F1] inline-flex items-center gap-1 hover:underline">
                           Open page <ExternalLink size={11} />
                         </a>
                         <button onClick={() => navigate(`/app/optimizer?url=${encodeURIComponent(p.url)}`)}
@@ -262,7 +262,7 @@ export default function ProjectDetail() {
               <div className="grid md:grid-cols-2 gap-5 mb-5">
                 <Card className="p-5 rounded-xl border-border/60">
                   <div className="flex items-center justify-between mb-3">
-                    <h4 className="font-head font-bold text-sm flex items-center gap-2"><Zap size={15} className="text-[#18C090]" /> Site Speed</h4>
+                    <h4 className="font-head font-bold text-sm flex items-center gap-2"><Zap size={15} className="text-[#6366F1]" /> Site Speed</h4>
                     <span className="text-2xl font-bold tabular-nums" style={{ color: scoreColor(tech.speed_score || 0) }}>{tech.speed_score ?? "—"}</span>
                   </div>
                   <StatRow label="Avg load time" value={`${tech.avg_load_time_ms ?? "—"} ms`} />
@@ -272,7 +272,7 @@ export default function ProjectDetail() {
                 </Card>
                 <Card className="p-5 rounded-xl border-border/60">
                   <div className="flex items-center justify-between mb-3">
-                    <h4 className="font-head font-bold text-sm flex items-center gap-2"><Globe size={15} className="text-[#18C090]" /> Crawlability</h4>
+                    <h4 className="font-head font-bold text-sm flex items-center gap-2"><Globe size={15} className="text-[#6366F1]" /> Crawlability</h4>
                     <span className="text-2xl font-bold tabular-nums" style={{ color: scoreColor(tech.crawl_score || 0) }}>{tech.crawl_score ?? "—"}</span>
                   </div>
                   <div className="flex flex-wrap gap-2 mb-3">
@@ -319,7 +319,7 @@ export default function ProjectDetail() {
                         : <XCircle size={16} className="text-muted-foreground shrink-0" />}
                     </div>
                     {p.present && p.url ? (
-                      <a href={p.url} target="_blank" rel="noreferrer" className="text-[11px] text-[#18C090] font-medium inline-flex items-center gap-1 mt-2 hover:underline truncate">
+                      <a href={p.url} target="_blank" rel="noreferrer" className="text-[11px] text-[#6366F1] font-medium inline-flex items-center gap-1 mt-2 hover:underline truncate">
                         <ExternalLink size={10} className="shrink-0" /> <span className="truncate">{p.url.replace(/^https?:\/\//, "")}</span>
                       </a>
                     ) : <div className="text-[11px] text-muted-foreground mt-2">No listing found — opportunity to claim</div>}
@@ -348,7 +348,7 @@ export default function ProjectDetail() {
                     </div>
                     <p className="font-head font-bold text-[14px] mt-0.5">{a.headline}</p>
                     {a.description ? <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{a.description}</p> : null}
-                    <a href={a.url} target="_blank" rel="noreferrer" className="text-xs text-[#18C090] font-medium inline-flex items-center gap-1 mt-1.5 hover:underline">Read article <ExternalLink size={11} /></a>
+                    <a href={a.url} target="_blank" rel="noreferrer" className="text-xs text-[#6366F1] font-medium inline-flex items-center gap-1 mt-1.5 hover:underline">Read article <ExternalLink size={11} /></a>
                   </div>
                 </Card>
               ))}
@@ -362,17 +362,17 @@ export default function ProjectDetail() {
           ) : (
             <div className="grid lg:grid-cols-2 gap-5">
               <Card className="p-5 rounded-xl border-border/60">
-                <h4 className="font-head font-bold text-sm mb-1 flex items-center gap-2"><Users size={15} className="text-[#18C090]" /> AI Share of Voice</h4>
+                <h4 className="font-head font-bold text-sm mb-1 flex items-center gap-2"><Users size={15} className="text-[#6366F1]" /> AI Share of Voice</h4>
                 <p className="text-xs text-muted-foreground mb-4">Presence across key AI-cited platforms (Crunchbase, G2, Capterra, Product Hunt, Trustpilot, LinkedIn).</p>
                 <div className="space-y-3">
                   {sov.map((s, i) => (
                     <div key={i}>
                       <div className="flex items-center justify-between text-sm mb-1">
-                        <span className={`truncate ${s.is_you ? "font-bold text-[#18C090]" : "font-medium"}`}>{s.name}{s.is_you ? " (you)" : ""}</span>
+                        <span className={`truncate ${s.is_you ? "font-bold text-[#6366F1]" : "font-medium"}`}>{s.name}{s.is_you ? " (you)" : ""}</span>
                         <span className="tabular-nums text-xs text-muted-foreground">{s.share_pct}%</span>
                       </div>
                       <div className="h-2 rounded-full bg-muted overflow-hidden">
-                        <div className="h-full rounded-full" style={{ width: `${s.share_pct}%`, background: s.is_you ? "#18C090" : "#94a3b8" }} />
+                        <div className="h-full rounded-full" style={{ width: `${s.share_pct}%`, background: s.is_you ? "#6366F1" : "#94a3b8" }} />
                       </div>
                     </div>
                   ))}
@@ -389,7 +389,7 @@ export default function ProjectDetail() {
                       <div key={i} className="p-3 rounded-lg border border-amber-200 bg-amber-50/60">
                         <div className="font-semibold text-sm">{g.platform}</div>
                         <div className="text-xs text-muted-foreground mt-1">Listed here: {g.competitors_present.map((c, k) => (
-                          <a key={k} href={c.url} target="_blank" rel="noreferrer" className="text-[#18C090] hover:underline">{c.name}{k < g.competitors_present.length - 1 ? ", " : ""}</a>
+                          <a key={k} href={c.url} target="_blank" rel="noreferrer" className="text-[#6366F1] hover:underline">{c.name}{k < g.competitors_present.length - 1 ? ", " : ""}</a>
                         ))}</div>
                       </div>
                     ))}
@@ -494,9 +494,9 @@ function MiniStat({ label, value, tone = "ok" }) {
 function DrillCard({ icon: Icon, title, subtitle, onClick, testid }) {
   return (
     <button onClick={onClick} data-testid={testid}
-      className="text-left p-4 rounded-xl border border-border/60 bg-card hover:shadow-md hover:border-[#18C090] transition-all">
+      className="text-left p-4 rounded-xl border border-border/60 bg-card hover:shadow-md hover:border-[#6366F1] transition-all">
       <div className="flex items-center gap-3">
-        <div className="w-9 h-9 rounded-lg bg-[#18C090]/10 grid place-items-center text-[#18C090]"><Icon size={18} /></div>
+        <div className="w-9 h-9 rounded-lg bg-[#6366F1]/10 grid place-items-center text-[#6366F1]"><Icon size={18} /></div>
         <div className="min-w-0 flex-1">
           <div className="font-head font-bold text-sm truncate">{title}</div>
           <div className="text-xs text-muted-foreground truncate">{subtitle}</div>

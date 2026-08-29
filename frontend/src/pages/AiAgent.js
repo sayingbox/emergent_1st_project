@@ -459,7 +459,7 @@ export default function AiAgent() {
           </div>
 
           {/* Messages */}
-          <div ref={scrollRef} className="flex-1 overflow-y-auto px-5 py-6 space-y-5 bg-[radial-gradient(circle_at_50%_-20%,rgba(24,192,144,0.04),transparent_60%)]">
+          <div ref={scrollRef} className="flex-1 overflow-y-auto px-5 py-6 space-y-5 bg-[radial-gradient(circle_at_50%_-20%,rgba(99, 102, 241,0.04),transparent_60%)]">
             {messages.length === 0 && (
               <div className="h-full grid place-items-center text-center py-6">
                 <div className="max-w-md">

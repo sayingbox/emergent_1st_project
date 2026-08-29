@@ -131,7 +131,7 @@ export default function DomainAnalysis() {
 
       {loading && !r && (
         <Card className="p-10 rounded-xl border-border/60 mb-10 flex flex-col items-center justify-center text-center grain" data-testid="domain-loading">
-          <Loader2 size={28} className="animate-spin text-[#18C090]" />
+          <Loader2 size={28} className="animate-spin text-[#6366F1]" />
           <p className="font-head font-bold mt-4">Crawling the site &amp; building your AI-search report…</p>
           <p className="text-sm text-muted-foreground mt-1">Discovering the real business &amp; services, mapping AI-search rankings by topic, and HTTP-verifying every citation URL is live. This can take up to a minute.</p>
         </Card>
@@ -154,7 +154,7 @@ export default function DomainAnalysis() {
 
           {/* SEO & authority metrics */}
           <Card className="lg:col-span-8 p-6 rounded-xl border-border/60">
-            <h3 className="font-head font-bold mb-4 flex items-center gap-2"><BarChart3 size={18} className="text-[#18C090]" /> SEO & authority metrics</h3>
+            <h3 className="font-head font-bold mb-4 flex items-center gap-2"><BarChart3 size={18} className="text-[#6366F1]" /> SEO & authority metrics</h3>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-4" data-testid="seo-metrics">
               <Metric label="Domain Authority" value={r.metrics?.domain_authority} colored />
               <Metric label="Page Authority" value={r.metrics?.page_authority} colored />
@@ -178,13 +178,13 @@ export default function DomainAnalysis() {
 
           {/* Discovered business & services (crawl-first) */}
           <Card className="lg:col-span-7 p-6 rounded-xl border-border/60">
-            <h3 className="font-head font-bold mb-1 flex items-center gap-2"><Layers size={18} className="text-[#18C090]" /> Discovered business &amp; services</h3>
+            <h3 className="font-head font-bold mb-1 flex items-center gap-2"><Layers size={18} className="text-[#6366F1]" /> Discovered business &amp; services</h3>
             <p className="text-xs text-muted-foreground mb-4">Extracted directly from a live crawl of the site{(r.crawled_pages || []).length ? ` (${r.crawled_pages.length} page${r.crawled_pages.length > 1 ? "s" : ""} crawled)` : ""}.</p>
             {!r.crawl_ok && <Badge className="mb-3 rounded-md border bg-amber-100 text-amber-700 border-amber-200">Live crawl returned little content — using brand knowledge</Badge>}
             <div className="space-y-2" data-testid="discovered-services">
               {(r.discovered_services || []).map((s, i) => (
                 <div key={i} className="flex items-start gap-3 p-3 rounded-lg border border-border/60">
-                  <FileSearch size={15} className="text-[#18C090] mt-0.5 shrink-0" />
+                  <FileSearch size={15} className="text-[#6366F1] mt-0.5 shrink-0" />
                   <div className="flex-1 min-w-0">
                     <div className="font-medium text-sm">{s.name}</div>
                     {s.evidence && <p className="text-xs text-muted-foreground mt-0.5 italic">&ldquo;{s.evidence}&rdquo;</p>}
@@ -198,7 +198,7 @@ export default function DomainAnalysis() {
             {(r.crawled_pages || []).length > 0 && (
               <div className="mt-4 flex flex-wrap gap-1.5" data-testid="crawled-pages">
                 {r.crawled_pages.map((u, i) => (
-                  <a key={i} href={u} target="_blank" rel="noreferrer" className="text-[10px] px-2 py-0.5 rounded bg-muted text-muted-foreground hover:text-[#18C090] break-all inline-flex items-center gap-1">{u.replace(/^https?:\/\//, "")} <ExternalLink size={9} /></a>
+                  <a key={i} href={u} target="_blank" rel="noreferrer" className="text-[10px] px-2 py-0.5 rounded bg-muted text-muted-foreground hover:text-[#6366F1] break-all inline-flex items-center gap-1">{u.replace(/^https?:\/\//, "")} <ExternalLink size={9} /></a>
                 ))}
               </div>
             )}
@@ -206,7 +206,7 @@ export default function DomainAnalysis() {
 
           {/* AI Search ranking by topic */}
           <Card className="lg:col-span-5 p-6 rounded-xl border-border/60">
-            <h3 className="font-head font-bold mb-1 flex items-center gap-2"><Search size={18} className="text-[#18C090]" /> AI Search ranking</h3>
+            <h3 className="font-head font-bold mb-1 flex items-center gap-2"><Search size={18} className="text-[#6366F1]" /> AI Search ranking</h3>
             <p className="text-xs text-muted-foreground mb-4">Does the brand surface in AI answers for each discovered topic?</p>
             <div className="space-y-2" data-testid="ai-search-rankings">
               {(r.ai_search_rankings || []).map((a, i) => (
@@ -232,7 +232,7 @@ export default function DomainAnalysis() {
 
           {/* AI citation sources */}
           <Card className="lg:col-span-7 p-6 rounded-xl border-border/60">
-            <h3 className="font-head font-bold mb-1 flex items-center gap-2"><Link2 size={18} className="text-[#18C090]" /> Verified AI citation sources</h3>
+            <h3 className="font-head font-bold mb-1 flex items-center gap-2"><Link2 size={18} className="text-[#6366F1]" /> Verified AI citation sources</h3>
             <p className="text-xs text-muted-foreground mb-4 inline-flex items-center gap-1"><ShieldCheck size={13} className="text-green-600" /> Live, HTTP-verified URLs AI engines pull this brand from ({(r.citation_sources || []).length} verified).</p>
             <div className="space-y-2" data-testid="citation-sources">
               {(showAllCites ? (r.citation_sources || []) : (r.citation_sources || []).slice(0, 5)).map((c, i) => (
@@ -245,7 +245,7 @@ export default function DomainAnalysis() {
                       <Badge className="rounded-md text-[10px] bg-green-100 text-green-700 border-green-200 border inline-flex items-center gap-0.5"><ShieldCheck size={10} /> Live</Badge>
                     </div>
                     {c.why && <p className="text-xs text-muted-foreground mt-0.5">{c.why}</p>}
-                    {c.url && <a href={c.url.startsWith("http") ? c.url : `https://${c.url}`} target="_blank" rel="noreferrer" className="text-xs text-[#18C090] inline-flex items-center gap-1 mt-1 hover:underline break-all">{c.url} <ExternalLink size={11} /></a>}
+                    {c.url && <a href={c.url.startsWith("http") ? c.url : `https://${c.url}`} target="_blank" rel="noreferrer" className="text-xs text-[#6366F1] inline-flex items-center gap-1 mt-1 hover:underline break-all">{c.url} <ExternalLink size={11} /></a>}
                   </div>
                   {c.authority != null && <span className="font-head font-bold text-sm shrink-0" style={{ color: scoreColor(c.authority) }}>{c.authority}</span>}
                 </div>
@@ -256,7 +256,7 @@ export default function DomainAnalysis() {
             </div>
             {(r.citation_sources || []).length > 5 && (
               <button onClick={() => setShowAllCites((v) => !v)} data-testid="toggle-citations"
-                className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-[#18C090] hover:underline">
+                className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-[#6366F1] hover:underline">
                 {showAllCites ? <>Show less <ChevronUp size={15} /></> : <>View {(r.citation_sources.length - 5)} more <ChevronDown size={15} /></>}
               </button>
             )}
@@ -264,7 +264,7 @@ export default function DomainAnalysis() {
 
           {/* Ranking prompts */}
           <Card className="lg:col-span-5 p-6 rounded-xl border-border/60">
-            <h3 className="font-head font-bold mb-1 flex items-center gap-2"><Search size={18} className="text-[#18C090]" /> Ranking prompts</h3>
+            <h3 className="font-head font-bold mb-1 flex items-center gap-2"><Search size={18} className="text-[#6366F1]" /> Ranking prompts</h3>
             <p className="text-xs text-muted-foreground mb-4">Queries this domain surfaces for in AI answers ({(r.ranking_prompts || []).length} prompts).</p>
             <div className="space-y-2" data-testid="ranking-prompts">
               {(showAllPrompts ? (r.ranking_prompts || []) : (r.ranking_prompts || []).slice(0, 5)).map((p, i) => (
@@ -286,7 +286,7 @@ export default function DomainAnalysis() {
             </div>
             {(r.ranking_prompts || []).length > 5 && (
               <button onClick={() => setShowAllPrompts((v) => !v)} data-testid="toggle-prompts"
-                className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-[#18C090] hover:underline">
+                className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-[#6366F1] hover:underline">
                 {showAllPrompts ? <>Show less <ChevronUp size={15} /></> : <>View {(r.ranking_prompts.length - 5)} more <ChevronDown size={15} /></>}
               </button>
             )}
@@ -319,7 +319,7 @@ export default function DomainAnalysis() {
 
           {/* Quick wins */}
           <Card className="lg:col-span-5 p-6 rounded-xl border-border/60">
-            <h3 className="font-head font-bold mb-4 flex items-center gap-2"><Zap size={18} className="text-[#18C090]" /> Quick wins</h3>
+            <h3 className="font-head font-bold mb-4 flex items-center gap-2"><Zap size={18} className="text-[#6366F1]" /> Quick wins</h3>
             <div className="space-y-2">
               {(r.quick_wins || []).map((q, i) => (
                 <div key={i} className="flex items-start gap-3 p-3 rounded-lg bg-muted/50">
@@ -343,7 +343,7 @@ export default function DomainAnalysis() {
                 return (
                   <div key={i} className="p-3 rounded-lg border border-border/60">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <a href={`https://${(dom || "").replace(/^https?:\/\//, "")}`} target="_blank" rel="noreferrer" className="font-medium text-sm text-[#18C090] hover:underline inline-flex items-center gap-1">{dom} <ExternalLink size={11} /></a>
+                      <a href={`https://${(dom || "").replace(/^https?:\/\//, "")}`} target="_blank" rel="noreferrer" className="font-medium text-sm text-[#6366F1] hover:underline inline-flex items-center gap-1">{dom} <ExternalLink size={11} /></a>
                       {topic && <Badge variant="outline" className="rounded-md text-[10px] capitalize">{topic}</Badge>}
                     </div>
                     {note && <p className="text-xs text-muted-foreground mt-1">{note}</p>}

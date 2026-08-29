@@ -75,7 +75,7 @@ function PlatformCard({ p }) {
             <div className="space-y-1 pt-1 border-t border-border/40 mt-2">
               <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold pt-1">Live links</div>
               {p.links.map((l, i) => (
-                <a key={i} href={l.url} target="_blank" rel="noreferrer" className="text-[11px] text-[#18C090] font-medium flex items-center gap-1 hover:underline">
+                <a key={i} href={l.url} target="_blank" rel="noreferrer" className="text-[11px] text-[#6366F1] font-medium flex items-center gap-1 hover:underline">
                   <ExternalLink size={11} className="shrink-0" /> <span className="truncate">{l.url}</span>
                 </a>
               ))}
@@ -137,7 +137,7 @@ export default function BrandConsistency() {
 
       {loading && !r && (
         <Card className="p-10 rounded-xl border-border/60 mb-8 grid place-items-center text-center">
-          <Loader2 className="animate-spin text-[#18C090] mb-3" />
+          <Loader2 className="animate-spin text-[#6366F1] mb-3" />
           <p className="text-sm text-muted-foreground">Scanning platforms and comparing brand info…</p>
         </Card>
       )}
@@ -181,7 +181,7 @@ export default function BrandConsistency() {
             if (items.length === 0) return null;
             return (
               <div key={g.key}>
-                <h3 className="font-head font-bold mb-3 flex items-center gap-2"><g.icon size={18} className="text-[#18C090]" /> {g.label}</h3>
+                <h3 className="font-head font-bold mb-3 flex items-center gap-2"><g.icon size={18} className="text-[#6366F1]" /> {g.label}</h3>
                 <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
                   {items.map((p, i) => <PlatformCard key={i} p={p} />)}
                 </div>
@@ -192,7 +192,7 @@ export default function BrandConsistency() {
           {Array.isArray(r.recommendations) && r.recommendations.length > 0 && (
             <Card className="p-6 rounded-xl border-border/60">
               <h3 className="font-head font-bold mb-3">Recommendations</h3>
-              <ul className="space-y-2">{r.recommendations.map((x, i) => <li key={i} className="text-sm flex gap-2"><Sparkles size={15} className="text-[#18C090] mt-0.5 shrink-0" />{x}</li>)}</ul>
+              <ul className="space-y-2">{r.recommendations.map((x, i) => <li key={i} className="text-sm flex gap-2"><Sparkles size={15} className="text-[#6366F1] mt-0.5 shrink-0" />{x}</li>)}</ul>
             </Card>
           )}
         </div>

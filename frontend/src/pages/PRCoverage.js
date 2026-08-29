@@ -81,7 +81,7 @@ export default function PRCoverage() {
 
       {loading && !r && (
         <Card className="p-10 rounded-xl border-border/60 mb-8 grid place-items-center text-center">
-          <Loader2 className="animate-spin text-[#18C090] mb-3" />
+          <Loader2 className="animate-spin text-[#6366F1] mb-3" />
           <p className="text-sm text-muted-foreground">Finding press mentions and building your pitch list…</p>
         </Card>
       )}
@@ -114,7 +114,7 @@ export default function PRCoverage() {
                             </div>
                             <p className="font-head font-bold text-[15px] mt-1">{a.headline}</p>
                             {a.description ? <p className="text-xs text-muted-foreground mt-1">{a.description}</p> : null}
-                            {a.url ? <a href={a.url} target="_blank" rel="noreferrer" className="text-xs text-[#18C090] font-medium inline-flex items-center gap-1 mt-2 hover:underline">Read article <ExternalLink size={12} /></a> : null}
+                            {a.url ? <a href={a.url} target="_blank" rel="noreferrer" className="text-xs text-[#6366F1] font-medium inline-flex items-center gap-1 mt-2 hover:underline">Read article <ExternalLink size={12} /></a> : null}
                           </div>
                         </div>
                       </Card>
@@ -129,7 +129,7 @@ export default function PRCoverage() {
                 <div className="space-y-6">
                   {cats.map((c, i) => (
                     <div key={i}>
-                      <h3 className="font-head font-bold mb-3 flex items-center gap-2"><Send size={16} className="text-[#18C090]" /> {c.category}</h3>
+                      <h3 className="font-head font-bold mb-3 flex items-center gap-2"><Send size={16} className="text-[#6366F1]" /> {c.category}</h3>
                       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
                         {(c.outlets || []).map((o, j) => {
                           const logo = logoFor(o.domain);

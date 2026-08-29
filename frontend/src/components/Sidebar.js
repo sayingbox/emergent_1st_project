@@ -61,7 +61,7 @@ export function Sidebar() {
   return (
     <aside className="hidden lg:flex flex-col w-64 shrink-0 h-screen sticky top-0 sidebar-rail text-zinc-300 border-r border-white/5">
       <div className="px-5 h-16 flex items-center gap-2.5 border-b border-white/5">
-        <img src="/logo.png" alt="Citetail logo" className="w-9 h-9 object-contain drop-shadow-[0_0_10px_rgba(24,192,144,0.35)]" />
+        <img src="/logo.png" alt="Citetail logo" className="w-9 h-9 object-contain drop-shadow-[0_0_10px_rgba(99, 102, 241,0.35)]" />
         <div className="leading-tight">
           <div className="font-head font-extrabold text-lg tracking-tight">
             <span className="text-white">Cite</span><span className="gradient-text">tail</span>
@@ -81,7 +81,7 @@ export function Sidebar() {
                 return (
                   <Link key={it.to} to={it.to} data-testid={`nav-${it.label.toLowerCase().replace(/\s+/g, "-")}`}
                     className={`flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[13px] font-medium transition-all duration-200 ${active ? "nav-active-glow" : "text-zinc-400 hover:text-white hover:bg-white/5"}`}>
-                    <it.icon size={16} strokeWidth={active ? 2.4 : 2} className={active ? "text-[#18C090]" : ""} />
+                    <it.icon size={16} strokeWidth={active ? 2.4 : 2} className={active ? "text-[#6366F1]" : ""} />
                     <span className="flex-1">{it.label}</span>
                     {badgeCount > 0 && (
                       <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold grid place-items-center">
@@ -129,7 +129,7 @@ export function MobileTopbar() {
           const active = it.to === "/app" ? pathname === "/app" : pathname.startsWith(it.to);
           return (
             <Link key={it.to} to={it.to}
-              className={`whitespace-nowrap px-3 py-1.5 rounded-md text-xs font-medium ${active ? "bg-[#18C090] text-white shadow-[0_4px_16px_-4px_rgba(24,192,144,0.6)]" : "text-zinc-400"}`}>
+              className={`whitespace-nowrap px-3 py-1.5 rounded-md text-xs font-medium ${active ? "bg-[#6366F1] text-white shadow-[0_4px_16px_-4px_rgba(99, 102, 241,0.6)]" : "text-zinc-400"}`}>
               {it.label}
             </Link>
           );

@@ -30,9 +30,9 @@ export default function Auth() {
     <div className="min-h-screen grid lg:grid-cols-2">
       <div className="hidden lg:flex flex-col justify-between relative overflow-hidden bg-[#0B0B0F] p-12">
         <div className="absolute -top-32 -left-24 w-[520px] h-[520px] rounded-full opacity-60 blur-3xl"
-          style={{ background: "radial-gradient(circle, rgba(24,192,144,0.45) 0%, rgba(24,192,144,0) 70%)" }} />
+          style={{ background: "radial-gradient(circle, rgba(99, 102, 241,0.45) 0%, rgba(99, 102, 241,0) 70%)" }} />
         <div className="absolute bottom-0 right-0 w-[420px] h-[420px] rounded-full opacity-40 blur-3xl"
-          style={{ background: "radial-gradient(circle, rgba(24,192,144,0.35) 0%, rgba(24,192,144,0) 70%)" }} />
+          style={{ background: "radial-gradient(circle, rgba(99, 102, 241,0.35) 0%, rgba(99, 102, 241,0) 70%)" }} />
         <div className="relative flex items-center gap-2.5">
           <img src="/logo.png" alt="Citetail logo" className="w-10 h-10 object-contain" />
           <span className="font-head font-extrabold text-2xl tracking-tight text-white">Cite<span className="gradient-text">tail</span></span>
@@ -43,7 +43,7 @@ export default function Auth() {
           <div className="flex items-center gap-6 mt-8">
             {["Crawl-first analysis", "Verified citations", "Live AI rankings"].map((t) => (
               <div key={t} className="flex items-center gap-2 text-sm text-white/70">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#18C090]" /> {t}
+                <span className="w-1.5 h-1.5 rounded-full bg-[#6366F1]" /> {t}
               </div>
             ))}
           </div>
@@ -54,7 +54,7 @@ export default function Auth() {
         <div className="w-full max-w-sm">
           <div className="flex items-center gap-2.5 mb-8 lg:hidden">
             <img src="/logo.png" alt="Citetail logo" className="w-9 h-9 object-contain" />
-            <span className="font-head font-extrabold text-xl tracking-tight">Cite<span className="text-[#18C090]">tail</span></span>
+            <span className="font-head font-extrabold text-xl tracking-tight">Cite<span className="text-[#6366F1]">tail</span></span>
           </div>
           <h1 className="font-head text-3xl font-extrabold tracking-tight">{mode === "login" ? "Sign in" : "Create account"}</h1>
           <p className="text-muted-foreground text-sm mt-2 mb-8">{mode === "login" ? "Access your analyses and score history." : "Start scoring content in seconds."}</p>

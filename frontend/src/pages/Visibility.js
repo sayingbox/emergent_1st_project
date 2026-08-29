@@ -117,7 +117,7 @@ export default function Visibility() {
           {r.recommendations?.length > 0 && (
             <Card className="p-6 rounded-xl border-border/60 mt-4">
               <h3 className="font-head font-bold mb-3">How to improve visibility</h3>
-              <ul className="space-y-2">{r.recommendations.map((x, i) => <li key={i} className="text-sm flex gap-2"><Sparkles size={15} className="text-[#18C090] mt-0.5 shrink-0" />{x}</li>)}</ul>
+              <ul className="space-y-2">{r.recommendations.map((x, i) => <li key={i} className="text-sm flex gap-2"><Sparkles size={15} className="text-[#6366F1] mt-0.5 shrink-0" />{x}</li>)}</ul>
             </Card>
           )}
         </div>

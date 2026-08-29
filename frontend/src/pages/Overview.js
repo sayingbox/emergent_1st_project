@@ -8,7 +8,7 @@ import { scoreColor } from "@/components/ScoreGauge";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { FileText, Globe, Activity, Link2, MessageSquare, ArrowUpRight, Sparkles, Gauge, TrendingUp, BarChart3 } from "lucide-react";
 
-const BRAND = "#18C090";
+const BRAND = "#6366F1";
 
 const tools = [
   { to: "/app/domain", label: "Domain Analysis", desc: "Crawl-first AI-search audit of any site", icon: Globe },
@@ -27,9 +27,9 @@ function StatCard({ label, value, icon: Icon, isScore }) {
     <motion.div variants={fadeUp}>
       <Card data-testid={`stat-card-${label.toLowerCase().replace(/\s+/g, "-")}`}
         className="group relative overflow-hidden p-6 rounded-lg border-zinc-200 bg-white shadow-[0_2px_10px_rgba(0,0,0,0.04)] transition-transform duration-200 hover:-translate-y-[3px] hover:shadow-lg">
-        <div className="absolute top-0 left-0 h-[3px] w-0 group-hover:w-full bg-[#18C090] transition-all duration-300" />
+        <div className="absolute top-0 left-0 h-[3px] w-0 group-hover:w-full bg-[#6366F1] transition-all duration-300" />
         <div className="flex items-center justify-between">
-          <div className="w-9 h-9 rounded-md grid place-items-center" style={{ background: "rgba(24,192,144,0.1)", color: BRAND }}>
+          <div className="w-9 h-9 rounded-md grid place-items-center" style={{ background: "rgba(99, 102, 241,0.1)", color: BRAND }}>
             <Icon size={18} />
           </div>
           {isScore && <span className="text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded" style={{ background: `${col}1a`, color: col }}>/100</span>}
@@ -62,13 +62,13 @@ export default function Overview() {
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}
         className="relative overflow-hidden rounded-2xl bg-[#0B0B0F] p-8 sm:p-10 mb-8">
         <div className="absolute -top-24 -right-16 w-[380px] h-[380px] rounded-full blur-3xl opacity-60"
-          style={{ background: "radial-gradient(circle, rgba(24,192,144,0.45) 0%, rgba(24,192,144,0) 70%)" }} />
+          style={{ background: "radial-gradient(circle, rgba(99, 102, 241,0.45) 0%, rgba(99, 102, 241,0) 70%)" }} />
         <div className="relative">
-          <p className="text-xs tracking-[0.2em] uppercase font-bold text-[#18C090]">Overview</p>
+          <p className="text-xs tracking-[0.2em] uppercase font-bold text-[#6366F1]">Overview</p>
           <h1 className="font-head text-3xl sm:text-4xl font-extrabold tracking-tight text-white mt-2">Your AI-search command center</h1>
           <p className="text-white/60 mt-2 max-w-2xl text-sm">Track how ChatGPT, Claude, Perplexity and Gemini see your brand — across generative and answer engines, in one place.</p>
           <Link to="/app/domain" data-testid="hero-cta"
-            className="inline-flex items-center gap-2 mt-6 px-5 py-2.5 rounded-md bg-[#18C090] text-white text-sm font-semibold hover:bg-[#129E75] transition-colors">
+            className="inline-flex items-center gap-2 mt-6 px-5 py-2.5 rounded-md bg-[#6366F1] text-white text-sm font-semibold hover:bg-[#129E75] transition-colors">
             <Sparkles size={16} /> Analyze a domain
           </Link>
         </div>
@@ -86,19 +86,19 @@ export default function Overview() {
       <div className="grid lg:grid-cols-5 gap-6 mb-10">
         <Card className="lg:col-span-3 p-6 rounded-lg border-zinc-200 bg-white shadow-[0_2px_10px_rgba(0,0,0,0.04)]">
           <div className="flex items-center gap-2 mb-4">
-            <TrendingUp size={18} className="text-[#18C090]" />
+            <TrendingUp size={18} className="text-[#6366F1]" />
             <h3 className="font-head font-bold">Content score trend</h3>
           </div>
           {d?.content_trend?.length ? (
             <div className="h-60">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={d.content_trend.map((p) => ({ date: new Date(p.date).toLocaleDateString(), score: p.score }))} margin={{ left: -18, right: 6, top: 6 }}>
-                  <defs><linearGradient id="ct" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#18C090" stopOpacity={0.28} /><stop offset="100%" stopColor="#18C090" stopOpacity={0} /></linearGradient></defs>
+                  <defs><linearGradient id="ct" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#6366F1" stopOpacity={0.28} /><stop offset="100%" stopColor="#6366F1" stopOpacity={0} /></linearGradient></defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f1f1f4" vertical={false} />
                   <XAxis dataKey="date" tick={{ fontSize: 11 }} stroke="#a1a1aa" tickLine={false} axisLine={false} />
                   <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} stroke="#a1a1aa" tickLine={false} axisLine={false} />
-                  <Tooltip content={<ChartTooltip />} cursor={{ stroke: "#18C090", strokeOpacity: 0.3 }} />
-                  <Area type="monotone" dataKey="score" stroke="#18C090" strokeWidth={2.5} fill="url(#ct)" dot={{ r: 2.5, fill: "#18C090", strokeWidth: 0 }} activeDot={{ r: 4 }} />
+                  <Tooltip content={<ChartTooltip />} cursor={{ stroke: "#6366F1", strokeOpacity: 0.3 }} />
+                  <Area type="monotone" dataKey="score" stroke="#6366F1" strokeWidth={2.5} fill="url(#ct)" dot={{ r: 2.5, fill: "#6366F1", strokeWidth: 0 }} activeDot={{ r: 4 }} />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
@@ -118,7 +118,7 @@ export default function Overview() {
             {d?.activity?.length ? d.activity.map((a, i) => (
               <Link key={i} to={a.link}
                 className={`flex items-center gap-3 py-2.5 group ${i !== d.activity.length - 1 ? "border-b border-zinc-100" : ""}`}>
-                <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded shrink-0" style={{ background: "rgba(24,192,144,0.1)", color: BRAND }}>{a.type}</span>
+                <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded shrink-0" style={{ background: "rgba(99, 102, 241,0.1)", color: BRAND }}>{a.type}</span>
                 <span className="text-sm truncate flex-1 group-hover:text-[#129E75] transition-colors">{a.label}</span>
                 <ScorePill score={a.score} size="md" />
               </Link>
@@ -135,10 +135,10 @@ export default function Overview() {
             <Link to={t.to} data-testid={`tool-${t.label.toLowerCase().replace(/\s+/g, "-")}`}
               className="group flex flex-col h-full bg-white border border-zinc-200 rounded-lg p-6 shadow-[0_2px_10px_rgba(0,0,0,0.04)] transition-transform duration-200 hover:-translate-y-1 hover:shadow-lg">
               <div className="flex items-center justify-between mb-4">
-                <div className="w-11 h-11 rounded-lg grid place-items-center transition-colors" style={{ background: "rgba(24,192,144,0.1)", color: BRAND }}>
+                <div className="w-11 h-11 rounded-lg grid place-items-center transition-colors" style={{ background: "rgba(99, 102, 241,0.1)", color: BRAND }}>
                   <t.icon size={20} />
                 </div>
-                <ArrowUpRight size={18} className="text-zinc-300 group-hover:text-[#18C090] transition-colors" />
+                <ArrowUpRight size={18} className="text-zinc-300 group-hover:text-[#6366F1] transition-colors" />
               </div>
               <div className="font-head font-bold">{t.label}</div>
               <div className="text-sm text-zinc-500 mt-1">{t.desc}</div>

@@ -27,8 +27,8 @@ export function EmptyState({ icon: Icon, text }) {
   return (
     <div className="border border-dashed border-border/70 rounded-xl p-14 text-center text-muted-foreground grain bg-card/40">
       {Icon && (
-        <div className="mx-auto mb-4 w-12 h-12 rounded-full grid place-items-center bg-gradient-to-br from-[#18C090]/10 to-[#7C5CFF]/10 border border-[#18C090]/20">
-          <Icon size={20} className="text-[#18C090]" />
+        <div className="mx-auto mb-4 w-12 h-12 rounded-full grid place-items-center bg-gradient-to-br from-[#6366F1]/10 to-[#7C5CFF]/10 border border-[#6366F1]/20">
+          <Icon size={20} className="text-[#6366F1]" />
         </div>
       )}
       <p className="text-sm max-w-md mx-auto leading-relaxed">{text}</p>

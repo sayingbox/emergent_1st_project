@@ -119,3 +119,11 @@ User spec: Domain Analysis must follow a strict crawl-first workflow.
   - competitor_intel: 1 LLM call finds 4 competitors; TinyFish computes AI Share of Voice (presence across 6 platforms) + Gap Analysis (platforms where competitors listed but brand isn't). Only +1 LLM call per scan.
 - NOTE: existing projects must be Re-scanned to populate new sections.
 - Compact SEMrush-style UI: PageHeader (ui-bits.js) smaller title/subtitle/margins (global); search-box cards p-6/mb-8 -> p-4/mb-5 across 8 tool pages; Sidebar.js compacted (py-1.5, space-y-4, 16px icons, 13px text) so all menu items fit on laptop screens.
+
+## Premium UI redesign (2025-07)
+- New palette: electric indigo/violet accent (#6366F1 / #8B5CF6 / #4F7DFF) replacing green (#18C090) app-wide (global sed across pages+components + index.css rewrite).
+- Deep navy/slate sidebar gradient (.sidebar-rail: #0F1B33->#0A1120 with indigo/violet radial glows), indigo active-nav glow, indigo avatar/logo.
+- Typography: Inter body + Manrope headings, tighter letter-spacing.
+- Micro-animations: page rise on route change (Layout keyed .animate-rise), button hover lift + gradient, card-hover indigo glow, styled scrollbars, indigo focus rings.
+- Also #2 earlier this session: added Claude, Copilot, Grok to AI engine lists (Domain, Visibility, Project rankings) backend+frontend.
+- Zero LLM credits (pure styling). Admin registration+OTP (Resend) still pending user's RESEND_API_KEY.
