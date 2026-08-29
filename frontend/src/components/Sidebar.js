@@ -59,29 +59,29 @@ export function Sidebar() {
   }, [pathname]);
 
   return (
-    <aside className="hidden lg:flex flex-col w-64 shrink-0 h-screen sticky top-0 sidebar-rail text-zinc-300 border-r border-white/5">
-      <div className="px-5 h-16 flex items-center gap-2.5 border-b border-white/5">
-        <img src="/logo.png" alt="Citetail logo" className="w-9 h-9 object-contain drop-shadow-[0_0_10px_rgba(99, 102, 241,0.35)]" />
+    <aside className="hidden lg:flex flex-col w-64 shrink-0 h-screen sticky top-0 sidebar-rail text-slate-600 border-r border-slate-200">
+      <div className="px-5 h-16 flex items-center gap-2.5 border-b border-slate-200">
+        <img src="/logo.png" alt="Citetail logo" className="w-9 h-9 object-contain" />
         <div className="leading-tight">
           <div className="font-head font-extrabold text-lg tracking-tight">
-            <span className="text-white">Cite</span><span className="gradient-text">tail</span>
+            <span className="text-slate-900">Cite</span><span className="gradient-text">tail</span>
           </div>
-          <div className="text-[10px] text-zinc-500 tracking-wider uppercase">AI Answer Visibility</div>
+          <div className="text-[10px] text-slate-400 tracking-wider uppercase">AI Answer Visibility</div>
         </div>
       </div>
 
       <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-4">
         {groups.map((g) => (
           <div key={g.label}>
-            <div className="px-3 mb-1.5 text-[10px] tracking-[0.16em] uppercase font-bold text-zinc-500">{g.label}</div>
+            <div className="px-3 mb-1.5 text-[10px] tracking-[0.16em] uppercase font-bold text-slate-400">{g.label}</div>
             <div className="space-y-0.5">
               {g.items.map((it) => {
                 const active = isActive(it.to);
                 const badgeCount = it.badgeKey === "alerts" ? unread : 0;
                 return (
                   <Link key={it.to} to={it.to} data-testid={`nav-${it.label.toLowerCase().replace(/\s+/g, "-")}`}
-                    className={`flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[13px] font-medium transition-all duration-200 ${active ? "nav-active-glow" : "text-zinc-400 hover:text-white hover:bg-white/5"}`}>
-                    <it.icon size={16} strokeWidth={active ? 2.4 : 2} className={active ? "text-[#6366F1]" : ""} />
+                    className={`flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[13px] font-medium transition-all duration-200 ${active ? "nav-active-glow" : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"}`}>
+                    <it.icon size={16} strokeWidth={active ? 2.4 : 2} className={active ? "text-[#6366F1]" : "text-slate-400"} />
                     <span className="flex-1">{it.label}</span>
                     {badgeCount > 0 && (
                       <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold grid place-items-center">
@@ -96,17 +96,17 @@ export function Sidebar() {
         ))}
       </nav>
 
-      <div className="p-3 border-t border-white/5">
+      <div className="p-3 border-t border-slate-200">
         <div className="flex items-center gap-3 px-2 py-2">
           <div className="w-8 h-8 rounded-full sidebar-avatar text-white grid place-items-center text-xs font-bold">
             {(user?.name || user?.email || "U").slice(0, 1).toUpperCase()}
           </div>
           <div className="min-w-0 flex-1">
-            <div className="text-xs font-medium text-white truncate">{user?.name}</div>
-            <div className="text-[10px] text-zinc-500 truncate" data-testid="sidebar-email">{user?.email}</div>
+            <div className="text-xs font-semibold text-slate-800 truncate">{user?.name}</div>
+            <div className="text-[10px] text-slate-400 truncate" data-testid="sidebar-email">{user?.email}</div>
           </div>
           <button data-testid="logout-btn" onClick={async () => { await logout(); navigate("/login"); }}
-            className="p-1.5 rounded-md text-zinc-400 hover:text-white hover:bg-white/10 transition-colors"><LogOut size={16} /></button>
+            className="p-1.5 rounded-md text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors"><LogOut size={16} /></button>
         </div>
       </div>
     </aside>
@@ -117,11 +117,11 @@ export function MobileTopbar() {
   const { pathname } = useLocation();
   const flat = groups.flatMap((g) => g.items);
   return (
-    <div className="lg:hidden sticky top-0 z-40 sidebar-rail text-white border-b border-white/10">
+    <div className="lg:hidden sticky top-0 z-40 bg-white text-slate-800 border-b border-slate-200 shadow-sm">
       <div className="h-14 px-4 flex items-center gap-2">
         <img src="/logo.png" alt="Citetail logo" className="w-7 h-7 object-contain" />
         <span className="font-head font-extrabold tracking-tight text-lg">
-          <span className="text-white">Cite</span><span className="gradient-text">tail</span>
+          <span className="text-slate-900">Cite</span><span className="gradient-text">tail</span>
         </span>
       </div>
       <div className="flex gap-1 overflow-x-auto px-3 pb-2">
@@ -129,7 +129,7 @@ export function MobileTopbar() {
           const active = it.to === "/app" ? pathname === "/app" : pathname.startsWith(it.to);
           return (
             <Link key={it.to} to={it.to}
-              className={`whitespace-nowrap px-3 py-1.5 rounded-md text-xs font-medium ${active ? "bg-[#6366F1] text-white shadow-[0_4px_16px_-4px_rgba(99, 102, 241,0.6)]" : "text-zinc-400"}`}>
+              className={`whitespace-nowrap px-3 py-1.5 rounded-md text-xs font-medium ${active ? "bg-[#6366F1] text-white shadow-[0_4px_16px_-4px_rgba(99,102,241,0.6)]" : "text-slate-500 hover:bg-slate-100"}`}>
               {it.label}
             </Link>
           );
