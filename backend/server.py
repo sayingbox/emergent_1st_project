@@ -660,7 +660,7 @@ class ProjectInput(BaseModel):
 from urllib.parse import urlparse, urljoin  # noqa: F811 (re-import for local readability)
 
 
-ENGINES_CHECKED = ["ChatGPT", "Claude", "Perplexity", "Gemini"]
+ENGINES_CHECKED = ["ChatGPT", "Claude", "Perplexity", "Gemini", "Google AI", "Copilot", "Grok"]
 
 # ---------- Crawl-first business discovery ----------
 CRAWL_LINK_KEYWORDS = [
@@ -829,7 +829,7 @@ DOMAIN_SYSTEM = """You are a world-class GEO/AEO (Generative & Answer Engine Opt
 You are given the ACTUAL crawled content of a company's website. Work in this exact order:
 1) BUSINESS DISCOVERY: from the crawled content ONLY, determine the company's real core business and the specific services/products they actually offer. Never invent services the site does not mention.
 2) TOPIC IDENTIFICATION: derive the topics they are genuinely relevant for, directly from those discovered services.
-3) AI SEARCH RANKING: for each topic, estimate whether and where the brand surfaces in AI Search (ChatGPT, Claude, Gemini, Perplexity).
+3) AI SEARCH RANKING: for each topic, estimate whether and where the brand surfaces in AI Search (ChatGPT, Claude, Gemini, Perplexity, Google AI, Copilot, Grok).
 4) VERIFIED CITATIONS: list the real third-party sources (with specific, real, currently-live URLs) that AI engines pull this brand's information from. Only provide REAL URLs you are confident actually resolve (official pages, Wikipedia, LinkedIn company page, Crunchbase, G2, Capterra, Trustpilot, Clutch, Glassdoor, YouTube, well-known news/industry outlets). Do NOT fabricate deep URLs or invented slugs.
 5) RANKING PROMPTS: generate search-style ranking prompts based ONLY on the discovered business topics (e.g. 'content moderation company', 'trust and safety services').
 6) COMPETITORS: identify real companies competing for the SAME AI answers on those topics.
@@ -887,13 +887,13 @@ Return valid minified JSON with EXACTLY this schema:
    {{"topic":"business topic derived DIRECTLY from the discovered services","authority":<0-100>,"relevance":<0-100>}}
  ],
  "ai_search_rankings": [
-   {{"topic":"MUST be one of top_topics.topic","ranks":<bool - does the brand surface in AI answers for this topic>,"engines":["chatgpt","claude","gemini","perplexity"],"position":"top|recommended|passing|not_ranking","note":"why it does/doesn't surface"}}
+   {{"topic":"MUST be one of top_topics.topic","ranks":<bool - does the brand surface in AI answers for this topic>,"engines":["chatgpt","claude","gemini","perplexity","google_ai","copilot","grok"],"position":"top|recommended|passing|not_ranking","note":"why it does/doesn't surface"}}
  ],
  "citation_sources": [
    {{"source":"publication/site name AI pulls brand info from","url":"REAL, currently-live URL (must actually resolve — no invented slugs)","type":"encyclopedia|review|news|directory|social|official|forum|academic|blog|video|podcast|documentation","authority":<0-100>,"why":"what info AI extracts about the brand from here"}}
  ],
  "ranking_prompts": [
-   {{"prompt":"a natural search-style query based on a discovered topic, e.g. 'content moderation company'","topic":"MUST be one of top_topics.topic","position":"top|recommended|passing","engines":["chatgpt","perplexity","gemini","claude"],"intent":"informational|commercial|navigational|comparison"}}
+   {{"prompt":"a natural search-style query based on a discovered topic, e.g. 'content moderation company'","topic":"MUST be one of top_topics.topic","position":"top|recommended|passing","engines":["chatgpt","perplexity","gemini","claude","google_ai","copilot","grok"],"intent":"informational|commercial|navigational|comparison"}}
  ],
  "quick_wins": [
    {{"priority":"high|medium|low","action":"specific, concrete action to improve AI visibility for the discovered topics"}}
@@ -1096,7 +1096,7 @@ async def visibility(body: VisibilityInput, user: dict = Depends(get_current_use
         raise HTTPException(status_code=400, detail="Brand and at least one prompt are required")
     system = """You simulate how leading generative AI engines respond to user prompts, and whether a given brand is mentioned or recommended in those answers. Base this on your knowledge of the brand's real-world prominence. Respond with ONLY valid minified JSON."""
     prompt = f"""BRAND: {body.brand}{(' (' + body.domain + ')') if body.domain else ''}
-For EACH of the following prompts, predict whether the brand would appear in AI answers across engines (ChatGPT, Perplexity, Google AI Overview, Gemini).
+For EACH of the following prompts, predict whether the brand would appear in AI answers across engines (ChatGPT, Claude, Perplexity, Google AI Overview, Gemini, Copilot, Grok).
 
 PROMPTS:
 {json.dumps(prompts)}
@@ -1107,7 +1107,7 @@ Return JSON:
  "visibility_score": <0-100 overall across all prompts/engines>,
  "share_of_voice": <0-100 estimated vs competitors>,
  "results": [
-   {{"prompt":"...","mentioned":<bool>,"position":"none|passing|recommended|top","sentiment":"positive|neutral|negative","engines":{{"chatgpt":<bool>,"perplexity":<bool>,"google_ai":<bool>,"gemini":<bool>}},"competitors_mentioned":["..."],"note":"why"}}
+   {{"prompt":"...","mentioned":<bool>,"position":"none|passing|recommended|top","sentiment":"positive|neutral|negative","engines":{{"chatgpt":<bool>,"claude":<bool>,"perplexity":<bool>,"google_ai":<bool>,"gemini":<bool>,"copilot":<bool>,"grok":<bool>}},"competitors_mentioned":["..."],"note":"why"}}
  ],
  "recommendations": ["how to increase AI visibility"]
 }}

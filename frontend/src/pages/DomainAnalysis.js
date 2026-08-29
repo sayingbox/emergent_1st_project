@@ -22,7 +22,7 @@ import { exportDomainReport } from "@/lib/pdf";
 
 const priColor = { high: "bg-red-100 text-red-700 border-red-200", medium: "bg-amber-100 text-amber-700 border-amber-200", low: "bg-gray-100 text-gray-600 border-gray-200" };
 const posColor = { top: "bg-green-100 text-green-700 border-green-200", recommended: "bg-green-100 text-green-700 border-green-200", passing: "bg-amber-100 text-amber-700 border-amber-200" };
-const engLabel = { chatgpt: "ChatGPT", perplexity: "Perplexity", google_ai: "Google AI", gemini: "Gemini", claude: "Claude" };
+const engLabel = { chatgpt: "ChatGPT", perplexity: "Perplexity", google_ai: "Google AI", gemini: "Gemini", claude: "Claude", copilot: "Copilot", grok: "Grok" };
 
 function Bar({ score, label, note }) {
   return (

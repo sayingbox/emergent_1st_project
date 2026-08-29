@@ -543,8 +543,8 @@ async def discover_citations(domain: str, brand_name: str, brand_summary: str, l
 
 # ----------------------- prompt ranking ------------------------------------
 
-RANKING_SYSTEM = """You are a GEO/AEO analyst simulating how ChatGPT, Perplexity,
-Google AI Overviews and Gemini would respond to search-style prompts, and whether a
+RANKING_SYSTEM = """You are a GEO/AEO analyst simulating how ChatGPT, Claude, Perplexity,
+Google AI Overviews, Gemini, Copilot and Grok would respond to search-style prompts, and whether a
 given brand appears in those AI answers. Base predictions on the brand's real market
 prominence. Return ONLY valid minified JSON."""
 
@@ -561,7 +561,7 @@ engine on the topics this brand plays in. Prefer commercial-intent prompts like
 Step 2: for EACH prompt predict whether the brand appears in AI answers.
 
 Return JSON:
-{{"prompts":[{{"prompt":"...","position":"top|recommended|passing|none","mentioned":<bool>,"engines":{{"chatgpt":<bool>,"perplexity":<bool>,"google_ai":<bool>,"gemini":<bool>}},"note":"one line"}}]}}
+{{"prompts":[{{"prompt":"...","position":"top|recommended|passing|none","mentioned":<bool>,"engines":{{"chatgpt":<bool>,"claude":<bool>,"perplexity":<bool>,"google_ai":<bool>,"gemini":<bool>,"copilot":<bool>,"grok":<bool>}},"note":"one line"}}]}}
 Exactly {RANKING_PROMPTS} objects, ranked by relevance."""
 
 

@@ -18,7 +18,7 @@ import { scoreColor } from "@/components/ScoreGauge";
 import { Activity, Loader2, Sparkles, Check, X } from "lucide-react";
 import { toast } from "sonner";
 
-const engineLabels = { chatgpt: "ChatGPT", perplexity: "Perplexity", google_ai: "Google AI", gemini: "Gemini" };
+const engineLabels = { chatgpt: "ChatGPT", claude: "Claude", perplexity: "Perplexity", google_ai: "Google AI", gemini: "Gemini", copilot: "Copilot", grok: "Grok" };
 const posColor = { top: "bg-green-100 text-green-700 border-green-200", recommended: "bg-green-100 text-green-700 border-green-200", passing: "bg-amber-100 text-amber-700 border-amber-200", none: "bg-red-100 text-red-700 border-red-200" };
 const JOB_KEY = "visibility";
 
