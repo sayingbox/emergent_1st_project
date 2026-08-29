@@ -70,18 +70,18 @@ export function Sidebar() {
         </div>
       </div>
 
-      <nav className="flex-1 overflow-y-auto py-6 px-3 space-y-6">
+      <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-4">
         {groups.map((g) => (
           <div key={g.label}>
-            <div className="px-3 mb-2 text-[10px] tracking-[0.18em] uppercase font-bold text-zinc-500">{g.label}</div>
-            <div className="space-y-1">
+            <div className="px-3 mb-1.5 text-[10px] tracking-[0.16em] uppercase font-bold text-zinc-500">{g.label}</div>
+            <div className="space-y-0.5">
               {g.items.map((it) => {
                 const active = isActive(it.to);
                 const badgeCount = it.badgeKey === "alerts" ? unread : 0;
                 return (
                   <Link key={it.to} to={it.to} data-testid={`nav-${it.label.toLowerCase().replace(/\s+/g, "-")}`}
-                    className={`flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${active ? "nav-active-glow" : "text-zinc-400 hover:text-white hover:bg-white/5"}`}>
-                    <it.icon size={18} strokeWidth={active ? 2.4 : 2} className={active ? "text-[#18C090]" : ""} />
+                    className={`flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[13px] font-medium transition-all duration-200 ${active ? "nav-active-glow" : "text-zinc-400 hover:text-white hover:bg-white/5"}`}>
+                    <it.icon size={16} strokeWidth={active ? 2.4 : 2} className={active ? "text-[#18C090]" : ""} />
                     <span className="flex-1">{it.label}</span>
                     {badgeCount > 0 && (
                       <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold grid place-items-center">

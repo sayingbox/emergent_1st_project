@@ -71,7 +71,7 @@ export default function Visibility() {
     <div>
       <PageHeader overline="Generative Engine (GEO)" title="Visibility Tracker" subtitle="See whether AI engines mention or recommend your brand for the prompts your customers ask." />
 
-      <Card className="p-6 rounded-xl border-border/60 mb-8 grid gap-4">
+      <Card className="p-4 rounded-xl border-border/60 mb-5 grid gap-4">
         <div className="grid sm:grid-cols-2 gap-4">
           <div><label className="text-xs uppercase font-bold text-muted-foreground">Brand</label><Input value={brand} onChange={(e) => setBrand(e.target.value)} placeholder="e.g. Notion" className="mt-1.5" data-testid="brand-input" /></div>
           <div><label className="text-xs uppercase font-bold text-muted-foreground">Domain (optional)</label><Input value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="notion.so" className="mt-1.5" data-testid="vis-domain-input" /></div>

@@ -54,7 +54,7 @@ export default function Reddit() {
     <div>
       <PageHeader overline="Generative Engine (GEO)" title="Reddit Finder" subtitle="Reddit is one of the most-cited sources by AI engines. Find the communities and threads where your brand should show up." />
 
-      <Card className="p-6 rounded-xl border-border/60 mb-8">
+      <Card className="p-4 rounded-xl border-border/60 mb-5">
         <div className="flex gap-2">
           <div className="relative flex-1">
             <MessageSquare size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />

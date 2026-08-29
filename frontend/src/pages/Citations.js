@@ -63,7 +63,7 @@ export default function Citations() {
     <div>
       <PageHeader overline="Generative Engine (GEO)" title="Citation Sources" subtitle="For any query, see which domains an AI engine would most likely cite — and whether yours makes the cut." />
 
-      <Card className="p-6 rounded-xl border-border/60 mb-8 grid gap-4">
+      <Card className="p-4 rounded-xl border-border/60 mb-5 grid gap-4">
         <div><label className="text-xs uppercase font-bold text-muted-foreground">Query</label><Input value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => e.key === "Enter" && run()} placeholder='e.g. "best crm for startups"' className="mt-1.5" data-testid="citation-query-input" /></div>
         <div className="flex flex-col sm:flex-row gap-3 sm:items-end">
           <div className="flex-1"><label className="text-xs uppercase font-bold text-muted-foreground">Your domain (optional)</label><Input value={domain} onChange={(e) => setDomain(e.target.value)} placeholder="yourdomain.com" className="mt-1.5" data-testid="citation-domain-input" /></div>

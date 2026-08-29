@@ -123,7 +123,7 @@ export default function BrandConsistency() {
     <div>
       <PageHeader overline="Generative Engine (GEO)" title="Brand Consistency Checker" subtitle="Check how consistently your brand appears across social, startup directories and review sites so AI engines describe you the same way everywhere." />
 
-      <Card className="p-6 rounded-xl border-border/60 mb-8">
+      <Card className="p-4 rounded-xl border-border/60 mb-5">
         <div className="flex gap-2">
           <div className="relative flex-1">
             <ShieldCheck size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />

@@ -1971,6 +1971,10 @@ async def _run_project_scan(project_id: str, user_id: str, domain: str):
             "ai_citations_count": result.get("ai_citations_count", 0),
             "prompt_rankings_count": result.get("prompt_rankings_count", 0),
             "prompt_top_count": result.get("prompt_top_count", 0),
+            "technical_readiness": result.get("technical_readiness") or {},
+            "brand_presence": result.get("brand_presence") or {},
+            "pr_list": result.get("pr_list") or [],
+            "competitor_intel": result.get("competitor_intel") or {},
             "error": result.get("error"),
         }
         await db.projects.update_one({"id": project_id}, {"$set": set_doc})

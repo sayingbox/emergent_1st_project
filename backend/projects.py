@@ -21,6 +21,8 @@ from urllib.parse import urlparse, urljoin
 import requests
 from bs4 import BeautifulSoup
 
+import tinyfish_client as tf
+
 logger = logging.getLogger("citetail.projects")
 
 # ----------------------- config --------------------------------------------
@@ -621,10 +623,244 @@ async def discover_brand(domain: str, pages: list[dict], llm_call) -> dict:
 # ----------------------- top-level runner ----------------------------------
 
 
+# ----------------------- extended audit sections ---------------------------
+
+_PROJECT_PLATFORMS = [
+    ("LinkedIn", "social", "linkedin.com"),
+    ("YouTube", "social", "youtube.com"),
+    ("Reddit", "social", "reddit.com"),
+    ("Crunchbase", "directories", "crunchbase.com"),
+    ("Tracxn", "directories", "tracxn.com"),
+    ("Product Hunt", "directories", "producthunt.com"),
+    ("G2", "reviews", "g2.com"),
+    ("Capterra", "reviews", "capterra.com"),
+    ("Trustpilot", "reviews", "trustpilot.com"),
+    ("Gartner", "reviews", "gartner.com"),
+]
+_COMPET_PLATFORMS = ["crunchbase.com", "g2.com", "capterra.com", "producthunt.com", "trustpilot.com", "linkedin.com"]
+_PR_WIRE = {"prnewswire.com", "businesswire.com", "globenewswire.com", "einnews.com", "einpresswire.com",
+            "prweb.com", "accesswire.com", "newswire.com", "issuewire.com", "openpr.com"}
+_NON_PR = {"crunchbase.com", "g2.com", "capterra.com", "clutch.co", "trustpilot.com", "producthunt.com",
+           "tracxn.com", "goodfirms.co", "indiehackers.com", "gartner.com", "getapp.com", "sourceforge.net",
+           "wikipedia.org", "reddit.com", "x.com", "twitter.com", "youtube.com", "facebook.com",
+           "instagram.com", "linkedin.com", "github.com", "quora.com", "wellfound.com", "glassdoor.com",
+           "google.com", "bing.com", "yahoo.com", "duckduckgo.com"}
+
+
+def _slug(s: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+
+
+def _mentions(name: str, *texts) -> bool:
+    blob = _slug(" ".join(t or "" for t in texts))
+    if not blob:
+        return False
+    whole = _slug(name)
+    if whole and whole in blob:
+        return True
+    toks = [t for t in (re.sub(r"[^a-z0-9]", "", w.lower()) for w in re.split(r"\s+", name or "")) if len(t) >= 3]
+    if not toks:
+        return bool(whole) and whole in blob
+    longest = max(toks, key=len)
+    return len(longest) >= 3 and longest in blob
+
+
+def _median(xs: list) -> float:
+    xs = sorted(xs)
+    n = len(xs)
+    if n == 0:
+        return 0
+    return xs[n // 2] if n % 2 else (xs[n // 2 - 1] + xs[n // 2]) / 2
+
+
+def technical_readiness(analyzed: list, raw: list, domain: str) -> dict:
+    """Site-speed + crawlability signals. Pure computation + 2 tiny HTTP checks."""
+    n = len(analyzed) or 1
+    load_times = [p.get("load_time_ms", 0) for p in analyzed]
+    sizes = [p.get("size_kb", 0) for p in analyzed]
+    ok_pages = sum(1 for p in analyzed if (p.get("status") or 0) == 200)
+    slow_pages = [{"url": p["url"], "load_time_ms": p["load_time_ms"]} for p in analyzed if p.get("load_time_ms", 0) > 3000]
+    slow_pages.sort(key=lambda x: -x["load_time_ms"])
+    has_schema = sum(1 for p in analyzed if p.get("has_schema"))
+    has_canonical = sum(1 for p in analyzed if p.get("has_canonical"))
+
+    root = domain if domain.startswith("http") else "https://" + domain
+    host = urlparse(root).netloc or domain
+    robots_ok, sitemap_in_robots, sitemap_ok = False, False, False
+    try:
+        rr = requests.get(f"https://{host}/robots.txt", headers=NO_CACHE_HEADERS, timeout=8)
+        robots_ok = rr.status_code == 200
+        sitemap_in_robots = "sitemap" in (rr.text or "").lower()
+    except Exception:
+        pass
+    try:
+        sr = requests.get(f"https://{host}/sitemap.xml", headers=NO_CACHE_HEADERS, timeout=8)
+        sitemap_ok = sr.status_code == 200 and ("<url" in (sr.text or "").lower() or "<sitemap" in (sr.text or "").lower())
+    except Exception:
+        pass
+
+    avg_load = round(sum(load_times) / n)
+    med_load = round(_median(load_times))
+    speed_score = max(0, min(100, round(100 - (avg_load / 40))))
+    crawl_score = round(
+        (ok_pages / n) * 40 +
+        (has_canonical / n) * 20 +
+        (has_schema / n) * 20 +
+        (20 if (sitemap_ok or sitemap_in_robots) else 0)
+    )
+    return {
+        "speed_score": speed_score,
+        "crawl_score": crawl_score,
+        "avg_load_time_ms": avg_load,
+        "median_load_time_ms": med_load,
+        "avg_page_size_kb": round(sum(sizes) / n, 1),
+        "slow_pages_count": len(slow_pages),
+        "slowest_pages": slow_pages[:5],
+        "pages_ok": ok_pages,
+        "pages_total": len(analyzed),
+        "schema_coverage_pct": round(has_schema / n * 100),
+        "canonical_coverage_pct": round(has_canonical / n * 100),
+        "robots_txt_found": robots_ok,
+        "sitemap_found": bool(sitemap_ok or sitemap_in_robots),
+        "https": root.startswith("https"),
+    }
+
+
+async def brand_presence_scan(brand: str, domain: str) -> dict:
+    """Real presence across key platforms via TinyFish site: search (no LLM)."""
+    if not tf.TINYFISH_API_KEY or not brand:
+        return {"platforms": [], "found_count": 0}
+    queries = [f"{brand} site:{site}" for (_, _, site) in _PROJECT_PLATFORMS]
+    results = await tf.tf_search_many(queries, max_results=3)
+    platforms = []
+    for (name, group, site), res in zip(_PROJECT_PLATFORMS, results):
+        matched = [r for r in res
+                   if tf.root_domain(tf.host_of(r.get("url", ""))) == site
+                   and _mentions(brand, r.get("url", ""), r.get("title", ""))]
+        platforms.append({
+            "platform": name, "group": group,
+            "present": bool(matched),
+            "url": matched[0].get("url") if matched else None,
+            "title": matched[0].get("title") if matched else None,
+        })
+    return {"platforms": platforms, "found_count": sum(1 for p in platforms if p["present"])}
+
+
+async def pr_list_scan(brand: str, domain: str) -> list:
+    """Real press list via TinyFish (no LLM). Labels paid vs organic PR."""
+    if not tf.TINYFISH_API_KEY or not brand:
+        return []
+    own = tf.root_domain(tf.host_of(domain)) if domain else None
+    bslug = _slug(brand)
+    queries = [
+        f"{brand} news", f'"{brand}" (funding OR raises OR launch OR announces OR partnership)',
+        f'"{brand}" (review OR interview OR feature OR profile)',
+        f'"{brand}" (press release OR PRNewswire OR "Business Wire")',
+    ]
+    tasks = []
+    for q in queries:
+        for pg in (1, 2):
+            tasks.append(tf.tf_search(q, max_results=12, page=pg))
+    batches = await asyncio.gather(*tasks)
+    seen, press = set(), []
+    for b in batches:
+        for r in b:
+            url = r.get("url", "")
+            host = tf.root_domain(tf.host_of(url))
+            first = host.split(".")[0] if host else ""
+            if not url or url in seen or (own and host == own) or (bslug and first == bslug):
+                continue
+            if host in _NON_PR or "/goto?" in url or "/url?" in url:
+                continue
+            if not _mentions(brand, url, r.get("title"), r.get("snippet")):
+                continue
+            seen.add(url)
+            press.append({
+                "publication": r.get("site_name") or host,
+                "publication_domain": host,
+                "headline": r.get("title"),
+                "description": r.get("snippet"),
+                "url": url, "date": r.get("date"),
+                "pr_type": "paid" if host in _PR_WIRE else "organic",
+            })
+    return press[:30]
+
+
+async def competitor_intel(brand: str, summary: str, services: list, brand_platforms: list, llm_call) -> dict:
+    """1 LLM call to find competitors, then REAL presence per competitor via TinyFish.
+    Computes AI Share of Voice + Gap Analysis (where competitors are cited but you aren't)."""
+    system = ("You identify a brand's closest direct competitors for AI-search visibility analysis. "
+              "Return ONLY valid minified JSON.")
+    prompt = (f"BRAND: {brand}\nSUMMARY: {summary}\nSERVICES: {', '.join(services or [])}\n\n"
+              'Return JSON: {"competitors":[{"name":"","domain":"","why":"one line"}]}. '
+              "Give exactly 4 real, well-known direct competitors (not the brand itself).")
+    comp = {}
+    try:
+        comp = await llm_call(system, prompt, f"proj-comp-{secrets.token_hex(3)}", max_tokens=1200)
+    except Exception as e:
+        logger.warning(f"competitor llm failed: {e}")
+    competitors = [c for c in (comp.get("competitors") or []) if isinstance(c, dict) and c.get("name")][:4]
+    if not competitors or not tf.TINYFISH_API_KEY:
+        return {"competitors": [], "share_of_voice": [], "gap_analysis": []}
+
+    # Real presence for each competitor across key platforms
+    all_q = []
+    for c in competitors:
+        for site in _COMPET_PLATFORMS:
+            all_q.append(f"{c['name']} site:{site}")
+    flat = await tf.tf_search_many(all_q, max_results=2)
+    # slice back per competitor
+    per_comp = {}
+    idx = 0
+    for c in competitors:
+        present = {}
+        for site in _COMPET_PLATFORMS:
+            res = flat[idx]; idx += 1
+            hit = [r for r in res if tf.root_domain(tf.host_of(r.get("url", ""))) == site and _mentions(c["name"], r.get("url", ""), r.get("title", ""))]
+            present[site] = hit[0].get("url") if hit else None
+        per_comp[c["name"]] = present
+
+    # brand presence on the same platform set
+    brand_present = {}
+    for site in _COMPET_PLATFORMS:
+        match = next((p for p in brand_platforms if tf.root_domain(tf.host_of(p.get("url") or "")) == site and p.get("present")), None)
+        brand_present[site] = match.get("url") if match else None
+
+    # Share of Voice: presence count across the platform set
+    def score(pres):
+        return sum(1 for v in pres.values() if v)
+    entries = [{"name": brand, "domain": "", "presence": score(brand_present), "is_you": True}]
+    for c in competitors:
+        entries.append({"name": c["name"], "domain": c.get("domain", ""), "presence": score(per_comp[c["name"]]), "is_you": False})
+    total = sum(e["presence"] for e in entries) or 1
+    share_of_voice = [{"name": e["name"], "domain": e["domain"], "is_you": e["is_you"],
+                       "presence": e["presence"], "share_pct": round(e["presence"] / total * 100)}
+                      for e in entries]
+    share_of_voice.sort(key=lambda x: -x["share_pct"])
+
+    # Gap Analysis: platforms where >=1 competitor is present but the brand is NOT
+    site_names = {"crunchbase.com": "Crunchbase", "g2.com": "G2", "capterra.com": "Capterra",
+                  "producthunt.com": "Product Hunt", "trustpilot.com": "Trustpilot", "linkedin.com": "LinkedIn"}
+    gaps = []
+    for site in _COMPET_PLATFORMS:
+        if brand_present.get(site):
+            continue
+        comps_here = [{"name": c["name"], "url": per_comp[c["name"]][site]} for c in competitors if per_comp[c["name"]][site]]
+        if comps_here:
+            gaps.append({"platform": site_names.get(site, site), "site": site,
+                         "you_present": False, "competitors_present": comps_here})
+    return {
+        "competitors": competitors,
+        "share_of_voice": share_of_voice,
+        "gap_analysis": gaps,
+    }
+
+
 async def run_full_project_scan(domain: str, llm_call, max_pages: int = DEFAULT_MAX_PAGES) -> dict:
     """
     Orchestrator: deep-crawl the domain, analyze each page, discover the brand via LLM,
-    find citations, rank prompts. Returns a dict ready to be persisted.
+    find citations, rank prompts, plus extended audit (technical readiness, brand
+    presence, PR list, competitor share-of-voice & gap analysis). Returns a dict.
     """
     # 1) Deep crawl
     raw_pages = await deep_crawl(domain, max_pages=max_pages)
@@ -647,6 +883,16 @@ async def run_full_project_scan(domain: str, llm_call, max_pages: int = DEFAULT_
     rankings_task = rank_prompts(domain, brand["brand"], brand["summary"], brand["services"], llm_call)
     citations, rankings = await asyncio.gather(citations_task, rankings_task)
 
+    # 5) Extended audit sections
+    technical = technical_readiness(analyzed, raw_pages, domain)
+    brand_presence, pr_list = await asyncio.gather(
+        brand_presence_scan(brand["brand"], domain),
+        pr_list_scan(brand["brand"], domain),
+    )
+    competitor = await competitor_intel(
+        brand["brand"], brand["summary"], brand["services"], brand_presence.get("platforms", []), llm_call
+    )
+
     aggregates = aggregate_project(analyzed, citations, rankings)
 
     return {
@@ -655,6 +901,10 @@ async def run_full_project_scan(domain: str, llm_call, max_pages: int = DEFAULT_
         "pages": analyzed,
         "citations": citations,
         "rankings": rankings,
+        "technical_readiness": technical,
+        "brand_presence": brand_presence,
+        "pr_list": pr_list,
+        "competitor_intel": competitor,
         **aggregates,
     }
 

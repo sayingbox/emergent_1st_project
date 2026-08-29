@@ -67,7 +67,7 @@ export default function PRCoverage() {
     <div>
       <PageHeader overline="Generative Engine (GEO)" title="PR Coverage" subtitle="See existing press mentions and a curated media pitch list — earned media is heavily cited by AI answer engines." />
 
-      <Card className="p-6 rounded-xl border-border/60 mb-8">
+      <Card className="p-4 rounded-xl border-border/60 mb-5">
         <div className="flex gap-2">
           <div className="relative flex-1">
             <Newspaper size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />

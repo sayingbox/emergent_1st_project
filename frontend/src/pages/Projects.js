@@ -89,7 +89,7 @@ export default function Projects() {
         subtitle="Add a domain once — we crawl the whole site, score every page, find where the brand is cited on the web, and check the prompts AI ranks it for."
       />
 
-      <Card className="p-6 rounded-xl border-border/60 mb-8">
+      <Card className="p-4 rounded-xl border-border/60 mb-5">
         <div className="flex gap-2">
           <div className="relative flex-1">
             <Globe size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />

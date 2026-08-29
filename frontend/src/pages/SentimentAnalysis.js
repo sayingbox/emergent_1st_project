@@ -153,7 +153,7 @@ export default function SentimentAnalysis() {
         subtitle="See how ChatGPT, Claude, Gemini, Perplexity & other AI engines feel about your brand — with actionable ways to shift the narrative."
       />
 
-      <Card className="p-6 rounded-xl border-border/60 mb-8 grid gap-4">
+      <Card className="p-4 rounded-xl border-border/60 mb-5 grid gap-4">
         <div>
           <label className="text-xs uppercase font-bold text-muted-foreground">Brand or Topic</label>
           <Input

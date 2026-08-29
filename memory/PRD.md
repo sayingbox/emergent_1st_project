@@ -110,3 +110,12 @@ User spec: Domain Analysis must follow a strict crawl-first workflow.
 ## Brand/PR enhancements (2025-07)
 - Brand Consistency now 18 platforms: social (+YouTube, +Reddit), directories (+Tracxn, +GoodFirms, +IndieHackers), reviews (+Gartner).
 - PR Coverage: paginated multi-query TinyFish search (6 queries x 3 pages) -> up to 50 real press items. Filters to real PR only (excludes directories/review/social/reference/app-store via NON_PR_HOSTS). Each item labelled pr_type: "paid" (press-release wires: PRNewswire/BusinessWire/GlobeNewswire/etc) vs "organic" (editorial). Frontend shows paid/organic badge.
+
+## Project Audit expansion + compact UI (2025-07)
+- Project scan (projects.py run_full_project_scan) now returns 4 new sections, persisted in server.py _run_project_scan set_doc and shown as new tabs in ProjectDetail.js:
+  - technical_readiness: speed_score, crawl_score, avg/median load, page size, sitemap/robots/https, schema & canonical coverage, slowest pages (pure compute + 2 HTTP checks, 0 LLM).
+  - brand_presence: TinyFish site: search across 10 key platforms, real links (0 LLM).
+  - pr_list: TinyFish paginated press search, paid/organic labels (0 LLM).
+  - competitor_intel: 1 LLM call finds 4 competitors; TinyFish computes AI Share of Voice (presence across 6 platforms) + Gap Analysis (platforms where competitors listed but brand isn't). Only +1 LLM call per scan.
+- NOTE: existing projects must be Re-scanned to populate new sections.
+- Compact SEMrush-style UI: PageHeader (ui-bits.js) smaller title/subtitle/margins (global); search-box cards p-6/mb-8 -> p-4/mb-5 across 8 tool pages; Sidebar.js compacted (py-1.5, space-y-4, 16px icons, 13px text) so all menu items fit on laptop screens.
