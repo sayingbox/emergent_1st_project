@@ -1,0 +1,319 @@
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;450;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+    margin: 0;
+    font-family: 'Inter', 'IBM Plex Sans', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    background: #FFFFFF;
+    color: #0B1120;
+    letter-spacing: -0.005em;
+}
+
+h1, h2, h3, h4, .font-head {
+    font-family: 'Manrope', sans-serif;
+    letter-spacing: -0.021em;
+}
+
+.font-mono, code, pre {
+    font-family: 'IBM Plex Mono', monospace;
+}
+
+@layer base {
+    :root {
+        --background: 0 0% 100%;
+        --foreground: 222 47% 11%;
+        --card: 0 0% 100%;
+        --card-foreground: 222 47% 11%;
+        --popover: 0 0% 100%;
+        --popover-foreground: 222 47% 11%;
+        --primary: 243 75% 59%;
+        --primary-foreground: 0 0% 100%;
+        --secondary: 220 16% 96%;
+        --secondary-foreground: 222 47% 11%;
+        --muted: 220 16% 96%;
+        --muted-foreground: 220 9% 46%;
+        --accent: 239 84% 67%;
+        --accent-foreground: 0 0% 100%;
+        --destructive: 0 72% 51%;
+        --destructive-foreground: 0 0% 98%;
+        --border: 220 14% 91%;
+        --input: 220 14% 91%;
+        --ring: 239 84% 67%;
+        --radius: 0.7rem;
+
+        /* Premium accent palette — electric indigo / violet / blue */
+        --brand-500: #6366F1;
+        --brand-400: #818CF8;
+        --brand-600: #4F46E5;
+        --brand-glow: 99 102 241;
+        --violet-500: #8B5CF6;
+        --blue-500: #4F7DFF;
+        --amber-500: #F5B342;
+        --pink-500: #FF6BA1;
+    }
+    .dark {
+        --background: 222 47% 6%;
+        --foreground: 0 0% 98%;
+        --card: 222 40% 9%;
+        --card-foreground: 0 0% 98%;
+        --popover: 222 40% 9%;
+        --popover-foreground: 0 0% 98%;
+        --primary: 239 84% 67%;
+        --primary-foreground: 0 0% 100%;
+        --secondary: 222 30% 15%;
+        --secondary-foreground: 0 0% 98%;
+        --muted: 222 30% 15%;
+        --muted-foreground: 220 12% 65%;
+        --accent: 239 84% 67%;
+        --accent-foreground: 0 0% 100%;
+        --destructive: 0 62% 45%;
+        --destructive-foreground: 0 0% 98%;
+        --border: 222 25% 18%;
+        --input: 222 25% 18%;
+        --ring: 239 84% 67%;
+    }
+}
+
+@layer base {
+    * { @apply border-border; }
+    body { @apply bg-background text-foreground; }
+}
+
+/* ==================================================================
+   Ambient page background — layered radial gradients for depth
+   ================================================================== */
+.app-bg {
+    background-color: #fafbff;
+    background-image:
+        radial-gradient(1200px circle at 6% -8%,  rgba(99, 102, 241, 0.10) 0%, transparent 46%),
+        radial-gradient(900px  circle at 106% 12%, rgba(139, 92, 246, 0.09) 0%, transparent 46%),
+        radial-gradient(1000px circle at 50% 108%, rgba(79, 125, 255, 0.05) 0%, transparent 52%);
+    background-attachment: fixed;
+}
+
+/* Subtle dot pattern — reusable */
+.grain {
+    background-image: radial-gradient(hsl(var(--muted-foreground)/0.15) 0.5px, transparent 0.5px);
+    background-size: 14px 14px;
+}
+
+.grid-lines {
+    background-image:
+        linear-gradient(to right, hsl(var(--border) / 0.6) 1px, transparent 1px),
+        linear-gradient(to bottom, hsl(var(--border) / 0.6) 1px, transparent 1px);
+    background-size: 42px 42px;
+    background-position: -1px -1px;
+}
+
+/* ==================================================================
+   Gradient text — reusable (violet -> indigo -> electric blue)
+   ================================================================== */
+.gradient-text {
+    background: linear-gradient(90deg, #6366F1 0%, #8B5CF6 45%, #4F7DFF 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+}
+
+.gradient-text-warm {
+    background: linear-gradient(90deg, #F5B342 0%, #FF6BA1 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+/* ==================================================================
+   Cards + surfaces
+   ================================================================== */
+.card-hover {
+    transition: transform 220ms cubic-bezier(.22,1,.36,1), box-shadow 220ms ease, border-color 220ms ease;
+}
+.card-hover:hover {
+    transform: translateY(-3px);
+    box-shadow:
+        0 1px 2px rgba(15, 23, 42, 0.04),
+        0 12px 34px -10px rgba(79, 70, 229, 0.22),
+        0 0 0 1px rgba(99, 102, 241, 0.14);
+    border-color: rgba(99, 102, 241, 0.40);
+}
+
+.soft-shadow {
+    box-shadow:
+        0 1px 2px rgba(15, 23, 42, 0.04),
+        0 8px 24px -10px rgba(30, 41, 59, 0.10);
+}
+
+/* Elevated hero card with subtle inner gradient */
+.hero-card {
+    background:
+        linear-gradient(135deg, rgba(99, 102, 241, 0.06) 0%, rgba(139, 92, 246, 0.05) 100%),
+        hsl(var(--card));
+    border: 1px solid hsl(var(--border));
+    position: relative;
+    overflow: hidden;
+}
+.hero-card::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(600px circle at 100% 0%, rgba(99, 102, 241, 0.12) 0%, transparent 50%);
+    pointer-events: none;
+}
+
+/* Gradient border (used sparingly for CTAs/highlights) */
+.gradient-border {
+    position: relative;
+    background: hsl(var(--card));
+    border-radius: var(--radius);
+}
+.gradient-border::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    padding: 1px;
+    border-radius: inherit;
+    background: linear-gradient(135deg, #6366F1, #8B5CF6);
+    -webkit-mask:
+        linear-gradient(#fff 0 0) content-box,
+        linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+            mask-composite: exclude;
+    pointer-events: none;
+}
+
+/* ==================================================================
+   Buttons — subtle micro-polish
+   ================================================================== */
+button {
+    transition: transform 160ms cubic-bezier(.22,1,.36,1), background-color 160ms ease, box-shadow 220ms ease, opacity 150ms ease;
+}
+button:active:not(:disabled) {
+    transform: translateY(0.5px) scale(0.995);
+}
+
+/* A "primary-brand" button variant (electric violet -> blue) */
+.btn-brand {
+    background: linear-gradient(135deg, #6D5EFC 0%, #4F7DFF 100%);
+    color: white;
+    box-shadow:
+        0 1px 2px rgba(79, 70, 229, 0.25),
+        0 10px 26px -8px rgba(99, 102, 241, 0.50);
+}
+.btn-brand:hover:not(:disabled) {
+    background: linear-gradient(135deg, #7d70ff 0%, #5f88ff 100%);
+    transform: translateY(-1px);
+    box-shadow:
+        0 1px 2px rgba(79, 70, 229, 0.30),
+        0 16px 32px -8px rgba(99, 102, 241, 0.60);
+}
+
+/* ==================================================================
+   Overline chip — used in PageHeader
+   ================================================================== */
+.overline-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.25rem 0.7rem;
+    font-size: 10px;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    font-weight: 700;
+    color: #4F46E5;
+    background: rgba(99, 102, 241, 0.10);
+    border: 1px solid rgba(99, 102, 241, 0.22);
+    border-radius: 999px;
+}
+.overline-chip::before {
+    content: "";
+    width: 6px; height: 6px; border-radius: 999px;
+    background: #6366F1;
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.20);
+}
+
+/* Divider that fades to nothing */
+.divider-fade {
+    height: 1px;
+    background: linear-gradient(to right, transparent, hsl(var(--border)), transparent);
+}
+
+/* ==================================================================
+   Sidebar polish — glow on the active nav link
+   ================================================================== */
+.nav-active-glow {
+    position: relative;
+    background: linear-gradient(90deg, rgba(99, 102, 241, 0.12) 0%, rgba(99, 102, 241, 0.03) 100%);
+    box-shadow: inset 2px 0 0 #6366F1;
+    color: #4F46E5;
+    font-weight: 600;
+}
+
+.sidebar-avatar {
+    background: linear-gradient(135deg, #6D5EFC 0%, #4F7DFF 100%);
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.30);
+}
+
+/* ==================================================================
+   Score-color aware background chip
+   ================================================================== */
+.score-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+/* ==================================================================
+   Micro-animations
+   ================================================================== */
+@keyframes soft-pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.55; }
+}
+.pulse-slow { animation: soft-pulse 2.2s ease-in-out infinite; }
+
+@keyframes fade-in-up {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+.animate-rise { animation: fade-in-up 0.45s cubic-bezier(.22,1,.36,1) both; }
+
+@keyframes float-sheen {
+    0% { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+}
+
+/* ==================================================================
+   Sidebar rail — clean white with a soft separating shadow
+   ================================================================== */
+.sidebar-rail {
+    background: #ffffff;
+    box-shadow: 1px 0 0 rgba(15, 23, 42, 0.06), 4px 0 24px -12px rgba(15, 23, 42, 0.12);
+}
+
+/* Focus ring polish */
+input:focus-visible, textarea:focus-visible, select:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.22);
+    border-color: rgba(99, 102, 241, 0.58) !important;
+}
+
+/* Prettier scrollbars */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: rgba(100, 116, 139, 0.32); border-radius: 999px; border: 2px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar-thumb:hover { background: rgba(99, 102, 241, 0.45); background-clip: content-box; }
+
+/* Smooth scroll */
+html { scroll-behavior: smooth; }
