@@ -2229,6 +2229,12 @@ async def delete_project(project_id: str, user: dict = Depends(get_current_user)
 
 app.include_router(api_router)
 
+# Admin OTP auth flow (registration + login + password reset).
+# Kept in a separate router so the admin URLs don't collide with the
+# standard user signup/login endpoints under /api/auth/.
+from admin_auth import admin_router as _admin_router  # noqa: E402
+app.include_router(_admin_router)
+
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
@@ -2244,11 +2250,18 @@ async def startup():
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@geo.com")
     admin_password = os.environ.get("ADMIN_PASSWORD", "admin123")
     existing = await db.users.find_one({"email": admin_email})
+    now_iso = datetime.now(timezone.utc).isoformat()
     if existing is None:
         await db.users.insert_one({"email": admin_email, "password_hash": hash_password(admin_password),
-                                   "name": "Admin", "role": "admin", "created_at": datetime.now(timezone.utc).isoformat()})
+                                   "name": "Admin", "role": "admin", "created_at": now_iso,
+                                   "password_set_at": now_iso, "admin_verified": True})
     elif not verify_password(admin_password, existing["password_hash"]):
-        await db.users.update_one({"email": admin_email}, {"$set": {"password_hash": hash_password(admin_password)}})
+        await db.users.update_one({"email": admin_email}, {"$set": {
+            "password_hash": hash_password(admin_password),
+            "password_set_at": now_iso,
+        }})
+    # Ensure TTL index for admin OTPs
+    await db.admin_otps.create_index("expires_at", expireAfterSeconds=0)
     logger.info("Startup complete")
 
 

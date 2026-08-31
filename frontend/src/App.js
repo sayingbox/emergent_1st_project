@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { Layout } from "@/components/Layout";
 import Auth from "@/pages/Auth";
+import AdminAuth from "@/pages/AdminAuth";
 import Overview from "@/pages/Overview";
 import DomainAnalysis from "@/pages/DomainAnalysis";
 import Visibility from "@/pages/Visibility";
@@ -34,6 +35,13 @@ function LoginRoute() {
   return <Auth />;
 }
 
+function AdminAuthRoute() {
+  const { user, ready } = useAuth();
+  if (!ready) return <div className="min-h-screen grid place-items-center"><Loader2 className="animate-spin text-muted-foreground" /></div>;
+  if (user) return <Navigate to="/app" replace />;
+  return <AdminAuth />;
+}
+
 function App() {
   return (
     <div className="App">
@@ -41,6 +49,10 @@ function App() {
         <BrowserRouter>
           <Routes>
             <Route path="/login" element={<LoginRoute />} />
+            <Route path="/admin/auth" element={<AdminAuthRoute />} />
+            <Route path="/admin/register" element={<AdminAuthRoute />} />
+            <Route path="/admin/login" element={<AdminAuthRoute />} />
+            <Route path="/admin/reset" element={<AdminAuthRoute />} />
             <Route path="/app" element={<Protected><Overview /></Protected>} />
             <Route path="/app/projects" element={<Protected><Projects /></Protected>} />
             <Route path="/app/projects/:id" element={<Protected><ProjectDetail /></Protected>} />

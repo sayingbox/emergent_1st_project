@@ -111,8 +111,19 @@ export function AuthProvider({ children }) {
     setUser(false);
   };
 
+  const refreshUser = useCallback(async () => {
+    try {
+      const { data } = await http.get("/auth/me");
+      setUser(data);
+      return data;
+    } catch {
+      setUser(false);
+      return null;
+    }
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ user, ready, login, register, logout }}>
+    <AuthContext.Provider value={{ user, ready, login, register, logout, refreshUser }}>
       {children}
     </AuthContext.Provider>
   );
