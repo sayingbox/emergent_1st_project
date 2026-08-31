@@ -775,12 +775,10 @@ def _mentions_brand(brand_term: str, *texts) -> bool:
 
 
 async def real_citation_sources(brand: str, domain: Optional[str]) -> list:
-    """Find REAL third-party citation sources for a brand via TinyFish search.
-
-    Every URL is a real search-engine result (never model-invented). Used to
-    replace the LLM's hallucinated citation list in domain analysis.
-    """
-    if not tf.TINYFISH_API_KEY or not brand:
+    """Find REAL third-party citation sources for a brand via web search
+    (TinyFish when configured, DuckDuckGo fallback otherwise), then HTTP-verify
+    every URL. Never returns model-invented links."""
+    if not brand:
         return []
     site_queries = [
         f"{brand} site:wikipedia.org", f"{brand} site:crunchbase.com",
@@ -808,12 +806,13 @@ async def real_citation_sources(brand: str, domain: Optional[str]) -> list:
         seen.add(url)
         cites.append({
             "source": r.get("site_name") or host,
+            "domain": host,
             "url": url,
             "title": r.get("title"),
             "type": tf.type_for(url, dt),
             "authority": tf.authority_for(url),
             "why": r.get("snippet") or "",
-            "verified": True,
+            "verified": False,
         })
 
     for batch in web_batches:
@@ -821,6 +820,12 @@ async def real_citation_sources(brand: str, domain: Optional[str]) -> list:
             add(r, "web")
     for r in news:
         add(r, "news")
+
+    # HTTP-verify liveness — drop any dead links so we NEVER show unverified sources
+    liveness = await verify_live_urls([c["url"] for c in cites])
+    cites = [c for c in cites if liveness.get(c["url"])]
+    for c in cites:
+        c["verified"] = True
     cites.sort(key=lambda c: -c.get("authority", 0))
     return cites[:50]
 
@@ -1130,24 +1135,147 @@ async def visibility_list(user: dict = Depends(get_current_user)):
 async def citations(body: CitationInput, user: dict = Depends(get_current_user)):
     if not body.query.strip():
         raise HTTPException(status_code=400, detail="Query is required")
-    system = """You predict which web sources a generative AI engine would most likely cite when answering a query, based on your knowledge of authoritative sources for the topic. Respond with ONLY valid minified JSON."""
-    dom = body.domain.strip() if body.domain else None
-    prompt = f"""QUERY: "{body.query}"
+    query = body.query.strip()
+    dom = (body.domain or "").strip().lower() or None
+    if dom:
+        dom = dom.replace("https://", "").replace("http://", "").strip("/").split("/")[0]
+        if dom.startswith("www."):
+            dom = dom[4:]
+
+    # 1) REAL search first (TinyFish if available, otherwise DuckDuckGo fallback).
+    #    Every URL is a real search-engine result, then HTTP-verified live.
+    web = await tf.tf_search(query, max_results=12)
+    news = await tf.tf_search(query, domain_type="news", max_results=6)
+    seen_hosts, sources = set(), []
+    for r, dt in [(x, "web") for x in web] + [(x, "news") for x in news]:
+        url = r.get("url", "")
+        host = tf.root_domain(tf.host_of(url))
+        if not url or not host or host in seen_hosts:
+            continue
+        if host in ("google.com", "bing.com", "duckduckgo.com", "yahoo.com") or "/goto?" in url or "/url?" in url:
+            continue
+        seen_hosts.add(host)
+        sources.append({
+            "domain": host,
+            "url": url,
+            "title": r.get("title") or "",
+            "type": tf.type_for(url, dt),
+            "authority": tf.authority_for(url),
+            "likelihood": min(100, max(35, tf.authority_for(url) - 10)),
+            "why": r.get("snippet") or "",
+        })
+
+    # HTTP-verify liveness — never show a dead source.
+    liveness = await verify_live_urls([s["url"] for s in sources])
+    sources = [s for s in sources if liveness.get(s["url"])]
+    for s in sources:
+        s["verified"] = True
+    sources.sort(key=lambda s: -s.get("authority", 0))
+    sources = sources[:12]
+
+    # Compute user_domain citation status from verified sources
+    user_domain_cited = None
+    user_domain_rank = None
+    recommendation = ""
+    if dom:
+        dom_root = tf.root_domain(dom)
+        rank = next((i + 1 for i, s in enumerate(sources) if s["domain"] == dom_root), None)
+        user_domain_cited = rank is not None
+        user_domain_rank = rank
+        if not user_domain_cited:
+            recommendation = (
+                f"{dom} is not yet cited for this query. Publish an authoritative page on the topic, "
+                f"get listed on well-known industry directories/reviews, and pursue mentions in the top-ranked sources above."
+            )
+
+    # 2) Fallback: only if real search returned nothing at all
+    if not sources:
+        system = """You predict which web sources a generative AI engine would most likely cite when answering a query, based on your knowledge of authoritative sources for the topic. Every URL you return MUST be a real, currently-live homepage or well-known section URL (no invented deep slugs). Respond with ONLY valid minified JSON."""
+        prompt = f"""QUERY: "{query}"
 {f'USER DOMAIN TO CHECK: {dom}' if dom else ''}
 
 Return JSON:
 {{
- "query": "{body.query}",
- "user_domain": {json.dumps(dom)},
- "user_domain_cited": <bool or null>,
- "user_domain_rank": <int or null, position among cited sources>,
- "sources": [{{"domain":"example.com","title":"likely page/source","type":"official|editorial|community|reference|competitor","authority":<0-100>,"likelihood":<0-100>,"why":"why AI would cite it"}}],
+ "sources": [{{"domain":"example.com","url":"https://example.com","title":"likely page/source","type":"official|editorial|community|reference|competitor","authority":<0-100>,"likelihood":<0-100>,"why":"why AI would cite it"}}],
  "recommendation": "how the user could earn a citation for this query"
 }}
-Provide 8-12 sources ranked by likelihood desc. If user_domain is provided, set user_domain_cited/rank accordingly (rank null if not cited)."""
-    res = await llm_json(system, prompt, f"cite-{user['id']}")
-    doc = {"id": secrets.token_hex(12), "user_id": user["id"], "query": body.query, "domain": dom,
-           "created_at": datetime.now(timezone.utc).isoformat(), **res}
+Provide 8-12 sources ranked by likelihood desc with real live URLs only."""
+        try:
+            res = await llm_json(system, prompt, f"cite-{user['id']}")
+        except Exception as e:
+            logger.warning(f"citations llm fallback failed: {e}")
+            res = {}
+        raw = [s for s in (res.get("sources") or []) if isinstance(s, dict) and s.get("domain")]
+        # Attach URL and HTTP-verify
+        for s in raw:
+            u = (s.get("url") or "").strip()
+            if not u:
+                u = f"https://{s['domain']}"
+            if not u.startswith(("http://", "https://")):
+                u = "https://" + u.lstrip("/")
+            s["url"] = u
+        liveness = await verify_live_urls([s["url"] for s in raw])
+        sources = [s for s in raw if liveness.get(s["url"])]
+        for s in sources:
+            s["verified"] = True
+        recommendation = res.get("recommendation") or recommendation
+        if dom:
+            dom_root = tf.root_domain(dom)
+            rank = next((i + 1 for i, s in enumerate(sources) if tf.root_domain(s.get("domain", "")) == dom_root), None)
+            user_domain_cited = rank is not None
+            user_domain_rank = rank
+
+    doc = {
+        "id": secrets.token_hex(12), "user_id": user["id"],
+        "query": query, "domain": dom,
+        "user_domain": dom,
+        "user_domain_cited": user_domain_cited,
+        "user_domain_rank": user_domain_rank,
+        "sources": sources,
+        "recommendation": recommendation,
+        "data_source": "Live web search (real URLs) + HTTP liveness verification",
+        "search_kind": "query",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.citations.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+class CitationDomainInput(BaseModel):
+    domain: str
+
+
+@api_router.post("/citations/by-domain")
+async def citations_by_domain(body: CitationDomainInput, user: dict = Depends(get_current_user)):
+    """Find every third-party citation source that already mentions this domain/brand.
+
+    Uses real web search (TinyFish or DuckDuckGo fallback) plus HTTP liveness
+    verification — no LLM call, so this endpoint costs zero LLM credits."""
+    dom = (body.domain or "").strip().lower().replace("https://", "").replace("http://", "").strip("/").split("/")[0]
+    if dom.startswith("www."):
+        dom = dom[4:]
+    if not dom or "." not in dom:
+        raise HTTPException(status_code=400, detail="Enter a valid domain, e.g. example.com")
+
+    brand_term = tf.brand_name_from_domain(dom)
+    sources = await real_citation_sources(brand_term, dom)
+    doc = {
+        "id": secrets.token_hex(12), "user_id": user["id"],
+        "query": dom, "domain": dom,
+        "user_domain": dom,
+        "user_domain_cited": True if sources else False,
+        "user_domain_rank": 1 if sources else None,
+        "sources": sources,
+        "recommendation": (
+            "" if sources else
+            f"No verified third-party citations of {dom} were found. Get listed on Wikipedia, "
+            f"LinkedIn, Crunchbase, and industry review sites (G2, Capterra, Trustpilot) to seed AI citations."
+        ),
+        "data_source": "Live web search (real URLs) + HTTP liveness verification",
+        "search_kind": "domain",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
     await db.citations.insert_one(doc)
     doc.pop("_id", None)
     return doc
@@ -1225,6 +1353,9 @@ async def brand_consistency(body: BrandConsistencyInput, user: dict = Depends(ge
     per_platform = await tf.tf_search_many(queries, max_results=4)
 
     platforms, evidence_for_llm = [], []
+    # Collect all top-URL candidates for a single concurrent liveness check
+    candidate_urls = set()
+    prepared = []
     for (name, group, site), results in zip(BRAND_PLATFORMS, per_platform):
         matched = [r for r in results if tf.root_domain(tf.host_of(r.get("url", ""))) == site]
         # X profiles may live on x.com even when we searched twitter.com
@@ -1232,7 +1363,15 @@ async def brand_consistency(body: BrandConsistencyInput, user: dict = Depends(ge
             matched = [r for r in results if tf.root_domain(tf.host_of(r.get("url", ""))) in ("x.com", "twitter.com")]
         # keep only results that actually reference the brand (drop namesakes/unrelated)
         matched = [r for r in matched if _mentions_brand(brand_term, r.get("url", ""), r.get("title", ""))]
-        links = [{"title": r.get("title"), "url": r.get("url"), "snippet": r.get("snippet")} for r in matched[:3]]
+        for r in matched[:3]:
+            u = r.get("url")
+            if u:
+                candidate_urls.add(u)
+        prepared.append((name, group, site, matched))
+    liveness = await verify_live_urls(list(candidate_urls))
+    for (name, group, site, matched) in prepared:
+        live_matched = [r for r in matched if liveness.get(r.get("url"))]
+        links = [{"title": r.get("title"), "url": r.get("url"), "snippet": r.get("snippet")} for r in live_matched[:3]]
         top = links[0] if links else None
         platforms.append({
             "platform": name, "group": group, "present": bool(links),
@@ -1240,6 +1379,7 @@ async def brand_consistency(body: BrandConsistencyInput, user: dict = Depends(ge
             "name": top["title"] if top else None,
             "description": top["snippet"] if top else None,
             "links": links, "features": [], "pricing": None, "note": "",
+            "verified": bool(links),
         })
         if links:
             evidence_for_llm.append({"platform": name, "results": links})
@@ -1395,6 +1535,12 @@ async def pr_coverage(body: PRInput, user: dict = Depends(get_current_user)):
             })
     press = press[:50]
 
+    # HTTP-verify every press link — never surface a dead article to the user.
+    liveness = await verify_live_urls([p["url"] for p in press])
+    press = [p for p in press if liveness.get(p["url"])]
+    for p in press:
+        p["verified"] = True
+
     # LLM verifies relevance + classifies editorial type, and builds a real-outlet pitch list.
     system = """You are a PR analyst. You are given REAL press search results (with real URLs) about a brand. (1) For each result decide if it is genuine press coverage of THIS brand (exclude namesakes and non-press pages) and classify its type. Use ONLY the provided URLs; never invent new ones. (2) Build a media pitch list of real, well-known outlets relevant to this brand, grouped by category. Respond with ONLY valid minified JSON."""
     prompt = f"""BRAND: {brand_term}
@@ -1427,6 +1573,26 @@ For "press" return one object PER index above (do not skip indices); set relevan
         final_press.append(p)
 
     pitch = [c for c in (llm.get("pitch_categories") or []) if isinstance(c, dict) and c.get("outlets")]
+    # Verify pitch outlets: only keep those whose domain resolves to a live homepage.
+    pitch_urls = []
+    for cat in pitch:
+        for o in (cat.get("outlets") or []):
+            d = (o.get("domain") or "").strip().lower()
+            if d:
+                pitch_urls.append(f"https://{d}")
+    pitch_live = await verify_live_urls(list(set(pitch_urls)))
+    cleaned_pitch = []
+    for cat in pitch:
+        outlets = []
+        for o in (cat.get("outlets") or []):
+            d = (o.get("domain") or "").strip().lower()
+            if d and pitch_live.get(f"https://{d}"):
+                o["url"] = f"https://{d}"
+                o["verified"] = True
+                outlets.append(o)
+        if outlets:
+            cleaned_pitch.append({**cat, "outlets": outlets})
+    pitch = cleaned_pitch
     doc = {
         "id": secrets.token_hex(12), "user_id": user["id"],
         "query": q, "brand": brand_term, "domain": own,

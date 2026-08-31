@@ -11,6 +11,11 @@ from urllib.parse import urlparse
 
 import httpx
 
+try:
+    from ddgs import DDGS
+except Exception:  # pragma: no cover - optional
+    DDGS = None
+
 logger = logging.getLogger(__name__)
 
 TINYFISH_API_KEY = os.environ.get("TINYFISH_API_KEY", "")
@@ -74,12 +79,41 @@ def _headers():
     return {"X-API-Key": TINYFISH_API_KEY}
 
 
+def _ddgs_search_sync(query: str, domain_type: str, max_results: int) -> list:
+    """Real-web search fallback via DuckDuckGo (no key). Returns TinyFish-shaped result dicts."""
+    if DDGS is None:
+        return []
+    try:
+        with DDGS() as ddg:
+            raw = ddg.news(query, max_results=max_results) if domain_type == "news" else ddg.text(query, max_results=max_results)
+        out = []
+        for r in raw or []:
+            url = r.get("href") or r.get("url") or ""
+            if not url:
+                continue
+            host = urlparse(url).netloc.lower()
+            if host.startswith("www."):
+                host = host[4:]
+            out.append({
+                "url": url,
+                "title": r.get("title") or "",
+                "snippet": r.get("body") or r.get("excerpt") or "",
+                "site_name": host,
+                "date": r.get("date") or "",
+            })
+        return out
+    except Exception as e:
+        logger.warning(f"ddgs fallback failed for '{query}': {e}")
+        return []
+
+
 async def tf_search(query: str, domain_type: str = "web", max_results: int = 10,
                     recency_minutes: int = None, purpose: str = None, page: int = None) -> list:
-    """Run one TinyFish web/news search. Returns list of result dicts (real URLs)."""
+    """Run one web/news search. Uses TinyFish when a key is configured; otherwise
+    falls back to DuckDuckGo so results remain real URLs (never model-invented)."""
     if not TINYFISH_API_KEY:
-        logger.warning("TINYFISH_API_KEY missing")
-        return []
+        # DuckDuckGo fallback: real URLs, no key required
+        return await asyncio.to_thread(_ddgs_search_sync, query, domain_type, max_results)
     params = {"query": query}
     if domain_type and domain_type != "web":
         params["domain_type"] = domain_type

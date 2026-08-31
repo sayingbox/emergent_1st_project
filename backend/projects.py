@@ -727,28 +727,39 @@ def technical_readiness(analyzed: list, raw: list, domain: str) -> dict:
 
 
 async def brand_presence_scan(brand: str, domain: str) -> dict:
-    """Real presence across key platforms via TinyFish site: search (no LLM)."""
-    if not tf.TINYFISH_API_KEY or not brand:
+    """Real presence across key platforms via TinyFish (or DuckDuckGo fallback), then HTTP-verify."""
+    if not brand:
         return {"platforms": [], "found_count": 0}
     queries = [f"{brand} site:{site}" for (_, _, site) in _PROJECT_PLATFORMS]
     results = await tf.tf_search_many(queries, max_results=3)
-    platforms = []
+    prepared = []
+    candidate_urls = set()
     for (name, group, site), res in zip(_PROJECT_PLATFORMS, results):
         matched = [r for r in res
                    if tf.root_domain(tf.host_of(r.get("url", ""))) == site
                    and _mentions(brand, r.get("url", ""), r.get("title", ""))]
+        for r in matched:
+            if r.get("url"):
+                candidate_urls.add(r["url"])
+        prepared.append((name, group, matched))
+    from server import verify_live_urls  # local import to avoid cycles
+    liveness = await verify_live_urls(list(candidate_urls))
+    platforms = []
+    for (name, group, matched) in prepared:
+        live = [r for r in matched if liveness.get(r.get("url"))]
         platforms.append({
             "platform": name, "group": group,
-            "present": bool(matched),
-            "url": matched[0].get("url") if matched else None,
-            "title": matched[0].get("title") if matched else None,
+            "present": bool(live),
+            "url": live[0].get("url") if live else None,
+            "title": live[0].get("title") if live else None,
+            "verified": bool(live),
         })
     return {"platforms": platforms, "found_count": sum(1 for p in platforms if p["present"])}
 
 
 async def pr_list_scan(brand: str, domain: str) -> list:
-    """Real press list via TinyFish (no LLM). Labels paid vs organic PR."""
-    if not tf.TINYFISH_API_KEY or not brand:
+    """Real press list (no LLM). Labels paid vs organic PR and HTTP-verifies each link."""
+    if not brand:
         return []
     own = tf.root_domain(tf.host_of(domain)) if domain else None
     bslug = _slug(brand)
@@ -783,7 +794,14 @@ async def pr_list_scan(brand: str, domain: str) -> list:
                 "url": url, "date": r.get("date"),
                 "pr_type": "paid" if host in _PR_WIRE else "organic",
             })
-    return press[:30]
+    press = press[:30]
+    # HTTP-verify — never surface a dead article as PR coverage.
+    from server import verify_live_urls  # local import to avoid cycles
+    liveness = await verify_live_urls([p["url"] for p in press])
+    press = [p for p in press if liveness.get(p["url"])]
+    for p in press:
+        p["verified"] = True
+    return press
 
 
 async def competitor_intel(brand: str, summary: str, services: list, brand_platforms: list, llm_call) -> dict:
@@ -800,25 +818,36 @@ async def competitor_intel(brand: str, summary: str, services: list, brand_platf
     except Exception as e:
         logger.warning(f"competitor llm failed: {e}")
     competitors = [c for c in (comp.get("competitors") or []) if isinstance(c, dict) and c.get("name")][:4]
-    if not competitors or not tf.TINYFISH_API_KEY:
+    if not competitors:
         return {"competitors": [], "share_of_voice": [], "gap_analysis": []}
 
-    # Real presence for each competitor across key platforms
+    # Real presence for each competitor across key platforms (TinyFish or DuckDuckGo fallback)
     all_q = []
     for c in competitors:
         for site in _COMPET_PLATFORMS:
             all_q.append(f"{c['name']} site:{site}")
     flat = await tf.tf_search_many(all_q, max_results=2)
-    # slice back per competitor
-    per_comp = {}
+    # slice back per competitor, collect URLs for one concurrent HTTP verification
+    per_comp_raw = {}
     idx = 0
+    candidate_urls = set()
     for c in competitors:
         present = {}
         for site in _COMPET_PLATFORMS:
             res = flat[idx]; idx += 1
             hit = [r for r in res if tf.root_domain(tf.host_of(r.get("url", ""))) == site and _mentions(c["name"], r.get("url", ""), r.get("title", ""))]
-            present[site] = hit[0].get("url") if hit else None
-        per_comp[c["name"]] = present
+            u = hit[0].get("url") if hit else None
+            if u:
+                candidate_urls.add(u)
+            present[site] = u
+        per_comp_raw[c["name"]] = present
+
+    from server import verify_live_urls  # local import to avoid cycles
+    liveness = await verify_live_urls(list(candidate_urls))
+    per_comp = {
+        name: {site: (u if liveness.get(u) else None) for site, u in sites.items()}
+        for name, sites in per_comp_raw.items()
+    }
 
     # brand presence on the same platform set
     brand_present = {}
