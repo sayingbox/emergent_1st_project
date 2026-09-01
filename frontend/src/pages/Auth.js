@@ -22,8 +22,14 @@ export default function Auth() {
     setLoading(true);
     const res = mode === "login" ? await login(email, password, remember) : await register(name, email, password);
     setLoading(false);
-    if (res.ok) { toast.success(mode === "login" ? "Welcome back" : "Account created"); navigate("/app"); }
-    else toast.error(res.error);
+    if (res.ok) {
+      toast.success(mode === "login" ? "Welcome back" : "Account created");
+      // Route paid users into /app; pending-payment users to /app/upgrade
+      const ent = res.user?.entitlements;
+      const admin = res.user?.full_access;
+      if (!admin && ent && !ent.is_active) navigate("/app/upgrade");
+      else navigate("/app");
+    } else toast.error(res.error);
   };
 
   return (
@@ -86,11 +92,12 @@ export default function Auth() {
           </form>
 
           <p className="text-sm text-muted-foreground mt-6">
-            {mode === "login" ? "New here? " : "Already have an account? "}
-            <button className="font-semibold text-[#129E75] underline underline-offset-4" data-testid="toggle-mode"
-              onClick={() => setMode(mode === "login" ? "register" : "login")}>
-              {mode === "login" ? "Create an account" : "Sign in"}
-            </button>
+            {mode === "login" ? (
+              <>New here? <a className="font-semibold text-[#129E75] underline underline-offset-4" href="/pricing" data-testid="link-pricing">See plans &amp; sign up</a></>
+            ) : (
+              <>Already have an account? <button className="font-semibold text-[#129E75] underline underline-offset-4" data-testid="toggle-mode"
+                onClick={() => setMode("login")}>Sign in</button></>
+            )}
           </p>
         </div>
       </div>

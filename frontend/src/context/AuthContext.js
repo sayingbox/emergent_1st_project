@@ -89,7 +89,7 @@ export function AuthProvider({ children }) {
     try {
       const { data } = await http.post("/auth/login", { email, password, remember });
       setUser(data);
-      return { ok: true };
+      return { ok: true, user: data };
     } catch (e) {
       return { ok: false, error: formatApiErrorDetail(e.response?.data?.detail) || e.message };
     }
@@ -99,7 +99,7 @@ export function AuthProvider({ children }) {
     try {
       const { data } = await http.post("/auth/register", { name, email, password });
       setUser(data);
-      return { ok: true };
+      return { ok: true, user: data };
     } catch (e) {
       return { ok: false, error: formatApiErrorDetail(e.response?.data?.detail) || e.message };
     }

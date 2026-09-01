@@ -4,6 +4,11 @@ import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { Layout } from "@/components/Layout";
 import Auth from "@/pages/Auth";
 import AdminAuth from "@/pages/AdminAuth";
+import Pricing from "@/pages/Pricing";
+import Signup from "@/pages/Signup";
+import PaymentSuccess from "@/pages/PaymentSuccess";
+import PaymentCancel from "@/pages/PaymentCancel";
+import Upgrade from "@/pages/Upgrade";
 import Overview from "@/pages/Overview";
 import DomainAnalysis from "@/pages/DomainAnalysis";
 import Visibility from "@/pages/Visibility";
@@ -21,10 +26,13 @@ import ProjectDetail from "@/pages/ProjectDetail";
 import { Toaster } from "@/components/ui/sonner";
 import { Loader2 } from "lucide-react";
 
-function Protected({ children }) {
+function Protected({ children, allowInactive = false }) {
   const { user, ready } = useAuth();
   if (!ready) return <div className="min-h-screen grid place-items-center"><Loader2 className="animate-spin text-muted-foreground" /></div>;
   if (!user) return <Navigate to="/login" replace />;
+  const admin = user?.full_access;
+  const active = user?.entitlements?.is_active;
+  if (!admin && !active && !allowInactive) return <Navigate to="/app/upgrade" replace />;
   return <Layout>{children}</Layout>;
 }
 
@@ -49,6 +57,10 @@ function App() {
         <BrowserRouter>
           <Routes>
             <Route path="/login" element={<LoginRoute />} />
+            <Route path="/pricing" element={<Pricing />} />
+            <Route path="/signup" element={<Signup />} />
+            <Route path="/payment/success" element={<PaymentSuccess />} />
+            <Route path="/payment/cancel" element={<PaymentCancel />} />
             <Route path="/admin/auth" element={<AdminAuthRoute />} />
             <Route path="/admin/register" element={<AdminAuthRoute />} />
             <Route path="/admin/login" element={<AdminAuthRoute />} />
@@ -67,6 +79,7 @@ function App() {
             <Route path="/app/agent" element={<Protected><AiAgent /></Protected>} />
             <Route path="/app/history" element={<Protected><History /></Protected>} />
             <Route path="/app/analysis/:id" element={<Protected><AnalysisDetail /></Protected>} />
+            <Route path="/app/upgrade" element={<Protected allowInactive><Upgrade /></Protected>} />
             <Route path="*" element={<Navigate to="/app" replace />} />
           </Routes>
         </BrowserRouter>

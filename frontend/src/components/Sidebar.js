@@ -2,7 +2,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { http } from "@/lib/api";
-import { LayoutDashboard, Globe, Activity, Link2, MessageSquare, FileText, LogOut, FolderKanban, Heart, Bot, ShieldCheck, Newspaper } from "lucide-react";
+import { LayoutDashboard, Globe, Activity, Link2, MessageSquare, FileText, LogOut, FolderKanban, Heart, Bot, ShieldCheck, Newspaper, Lock } from "lucide-react";
 
 const groups = [
   {
@@ -10,30 +10,30 @@ const groups = [
     items: [
       { to: "/app", label: "Dashboard", icon: LayoutDashboard },
       { to: "/app/projects", label: "Projects", icon: FolderKanban },
-      { to: "/app/domain", label: "Domain Analysis", icon: Globe },
+      { to: "/app/domain", label: "Domain Analysis", icon: Globe, feature: "domain" },
     ],
   },
   {
     label: "Generative Engine (GEO)",
     items: [
-      { to: "/app/visibility", label: "Visibility Tracker", icon: Activity },
-      { to: "/app/citations", label: "Citation Sources", icon: Link2 },
-      { to: "/app/sentiment", label: "Sentiment Analysis", icon: Heart },
-      { to: "/app/reddit", label: "Reddit Finder", icon: MessageSquare },
-      { to: "/app/brand", label: "Brand Consistency", icon: ShieldCheck },
-      { to: "/app/pr", label: "PR Coverage", icon: Newspaper },
+      { to: "/app/visibility", label: "Visibility Tracker", icon: Activity, feature: "visibility" },
+      { to: "/app/citations", label: "Citation Sources", icon: Link2, feature: "citations" },
+      { to: "/app/sentiment", label: "Sentiment Analysis", icon: Heart, feature: "sentiment" },
+      { to: "/app/reddit", label: "Reddit Finder", icon: MessageSquare, feature: "reddit" },
+      { to: "/app/brand", label: "Brand Consistency", icon: ShieldCheck, feature: "brand" },
+      { to: "/app/pr", label: "PR Coverage", icon: Newspaper, feature: "pr" },
     ],
   },
   {
     label: "Answer Engine (AEO)",
     items: [
-      { to: "/app/optimizer", label: "Content Optimizer", icon: FileText },
+      { to: "/app/optimizer", label: "Content Optimizer", icon: FileText, feature: "aeo" },
     ],
   },
   {
     label: "Assistant",
     items: [
-      { to: "/app/agent", label: "AI Agent", icon: Bot, badgeKey: "alerts" },
+      { to: "/app/agent", label: "AI Agent", icon: Bot, badgeKey: "alerts", feature: "agent" },
     ],
   },
 ];
@@ -78,6 +78,19 @@ export function Sidebar() {
               {g.items.map((it) => {
                 const active = isActive(it.to);
                 const badgeCount = it.badgeKey === "alerts" ? unread : 0;
+                const features = user?.entitlements?.features || [];
+                const fullAccess = user?.full_access;
+                const locked = !fullAccess && it.feature && !features.includes(it.feature);
+                if (locked) {
+                  return (
+                    <Link key={it.to} to="/app/upgrade" data-testid={`nav-locked-${it.feature}`}
+                      className="flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[13px] font-medium transition-all duration-200 text-slate-400 hover:bg-slate-100 hover:text-slate-600">
+                      <it.icon size={16} strokeWidth={2} className="text-slate-300" />
+                      <span className="flex-1">{it.label}</span>
+                      <Lock size={12} className="text-slate-400" />
+                    </Link>
+                  );
+                }
                 return (
                   <Link key={it.to} to={it.to} data-testid={`nav-${it.label.toLowerCase().replace(/\s+/g, "-")}`}
                     className={`flex items-center gap-2.5 px-3 py-1.5 rounded-lg text-[13px] font-medium transition-all duration-200 ${active ? "nav-active-glow" : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"}`}>

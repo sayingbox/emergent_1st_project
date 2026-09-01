@@ -53,6 +53,12 @@ def apply_entitlements(user: dict) -> dict:
         user["full_access"] = True
     else:
         user["full_access"] = user.get("role") == "admin"
+    # Attach plan/subscription info (best-effort — subscriptions module is loaded later)
+    try:
+        from subscriptions import entitlements_for
+        user["entitlements"] = entitlements_for(user)
+    except Exception:
+        user["entitlements"] = None
     return user
 
 app = FastAPI()
@@ -111,6 +117,9 @@ async def get_current_user(request: Request) -> dict:
         user["id"] = str(user["_id"])
         user.pop("_id", None)
         user.pop("password_hash", None)
+        # Carry plan / subscription info through to callers
+        for k in ("plan", "subscription_status", "plan_expires_at", "plan_started_at"):
+            user.setdefault(k, user.get(k))
         return apply_entitlements(user)
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
@@ -442,7 +451,15 @@ async def login(body: LoginInput, response: Response):
     minutes = REMEMBER_DAYS * 1440 if body.remember else 120
     days = REMEMBER_DAYS if body.remember else 7
     set_auth_cookies(response, create_access_token(uid, email, minutes=minutes), create_refresh_token(uid, days=days), remember=body.remember)
-    return apply_entitlements({"id": uid, "email": email, "name": user.get("name", "User"), "role": user.get("role", "user")})
+    payload = {
+        "id": uid, "email": email, "name": user.get("name", "User"),
+        "role": user.get("role", "user"),
+        "plan": user.get("plan"),
+        "subscription_status": user.get("subscription_status"),
+        "plan_expires_at": user.get("plan_expires_at"),
+        "plan_started_at": user.get("plan_started_at"),
+    }
+    return apply_entitlements(payload)
 
 
 @api_router.post("/auth/logout")
@@ -2167,9 +2184,28 @@ async def _run_project_scan(project_id: str, user_id: str, domain: str):
 @api_router.post("/projects")
 async def create_project(body: ProjectInput, user: dict = Depends(get_current_user)):
     from projects import new_project_doc
+    from subscriptions import is_active, plan_of
     domain = _normalize_domain(body.domain)
     if not domain or "." not in domain:
         raise HTTPException(status_code=400, detail="Enter a valid domain, e.g. example.com")
+    # Access + project-limit gate (admins bypass)
+    if not user.get("full_access"):
+        if not is_active(user):
+            raise HTTPException(status_code=402, detail={
+                "code": "payment_required",
+                "message": "Your subscription is inactive. Complete or renew your plan to create projects.",
+            })
+        p = plan_of(user)
+        limit = (p or {}).get("project_limit", 0)
+        current = await db.projects.count_documents({"user_id": user["id"]})
+        # Allow re-scanning an existing project (handled below) without counting toward the limit
+        will_be_new = await db.projects.find_one({"user_id": user["id"], "domain": domain}) is None
+        if will_be_new and current >= limit:
+            raise HTTPException(status_code=402, detail={
+                "code": "project_limit_reached",
+                "message": f"Your {p['name']} plan allows {limit} project(s). Upgrade to add more.",
+                "limit": limit, "plan": p["slug"],
+            })
     existing = await db.projects.find_one({"user_id": user["id"], "domain": domain}, {"_id": 0})
     if existing:
         await db.projects.update_one({"id": existing["id"]}, {"$set": {
@@ -2234,6 +2270,11 @@ app.include_router(api_router)
 # standard user signup/login endpoints under /api/auth/.
 from admin_auth import admin_router as _admin_router  # noqa: E402
 app.include_router(_admin_router)
+
+# Subscription + Stripe checkout endpoints
+from subscriptions import subs_router as _subs_router, stripe_webhook_router as _stripe_webhook_router  # noqa: E402
+app.include_router(_subs_router)
+app.include_router(_stripe_webhook_router, prefix="/api")
 
 app.add_middleware(
     CORSMiddleware,
