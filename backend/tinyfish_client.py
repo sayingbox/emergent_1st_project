@@ -5,6 +5,7 @@ page text. Both endpoints are free on TinyFish. We NEVER let the LLM invent URLs
 every link we display comes from a real TinyFish search result.
 """
 import os
+import time
 import asyncio
 import logging
 from urllib.parse import urlparse
@@ -21,6 +22,24 @@ logger = logging.getLogger(__name__)
 TINYFISH_API_KEY = os.environ.get("TINYFISH_API_KEY", "")
 SEARCH_URL = "https://api.search.tinyfish.ai"
 FETCH_URL = "https://api.fetch.tinyfish.ai"
+
+# Global throttle so concurrent callers (reviews + opportunities + competitor
+# intel all fire at once during a project scan) don't trip TinyFish's rate limit.
+# A semaphore caps concurrency; a paced lock spaces requests over time.
+_SEARCH_SEM = asyncio.Semaphore(2)
+_RATE_LOCK = asyncio.Lock()
+_MIN_INTERVAL = 0.5  # seconds between consecutive TinyFish requests
+_last_call = 0.0
+
+
+async def _pace():
+    """Ensure at least _MIN_INTERVAL between outgoing TinyFish requests."""
+    global _last_call
+    async with _RATE_LOCK:
+        wait = _MIN_INTERVAL - (time.monotonic() - _last_call)
+        if wait > 0:
+            await asyncio.sleep(wait)
+        _last_call = time.monotonic()
 
 # Heuristic authority per known source host (0-100) for citation ranking.
 HOST_AUTHORITY = {
@@ -123,15 +142,29 @@ async def tf_search(query: str, domain_type: str = "web", max_results: int = 10,
         params["purpose"] = purpose
     if page:
         params["page"] = page
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            r = await client.get(SEARCH_URL, params=params, headers=_headers())
-            r.raise_for_status()
-            data = r.json()
-        return (data.get("results") or [])[:max_results]
-    except Exception as e:
-        logger.warning(f"tf_search failed for '{query}': {e}")
-        return []
+    # Throttled + paced + retry-on-429 so bursts of concurrent searches aren't dropped.
+    attempts = 4
+    async with _SEARCH_SEM:
+        for attempt in range(attempts):
+            await _pace()
+            try:
+                async with httpx.AsyncClient(timeout=30) as client:
+                    r = await client.get(SEARCH_URL, params=params, headers=_headers())
+                if r.status_code == 429:
+                    if attempt < attempts - 1:
+                        await asyncio.sleep(2 * (2 ** attempt))  # 2, 4, 8s
+                        continue
+                    logger.warning(f"tf_search rate-limited (429) for '{query}'")
+                    return []
+                r.raise_for_status()
+                return (r.json().get("results") or [])[:max_results]
+            except Exception as e:
+                if attempt < attempts - 1:
+                    await asyncio.sleep(1.0 * (attempt + 1))
+                    continue
+                logger.warning(f"tf_search failed for '{query}': {e}")
+                return []
+    return []
 
 
 async def tf_search_many(queries: list, domain_type: str = "web", max_results: int = 6,

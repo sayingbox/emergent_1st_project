@@ -936,7 +936,6 @@ REVIEW_PLATFORMS = [
     ("Trustpilot", "trustpilot.com"),
     ("TrustRadius", "trustradius.com"),
     ("Product Hunt", "producthunt.com"),
-    ("Capterra", "capterra.com"),
     ("Clutch", "clutch.co"),
     ("GetApp", "getapp.com"),
     ("Software Advice", "softwareadvice.com"),
@@ -945,25 +944,35 @@ REVIEW_PLATFORMS = [
 ]
 _EXCLUDED_REVIEW_HOSTS = {"glassdoor.com", "indeed.com", "ambitionbox.com"}
 
-_RATING_RES = [
-    re.compile(r"(\d(?:\.\d)?)\s*(?:out of|/)\s*5", re.I),
-    re.compile(r"(\d\.\d)\s*(?:★|stars?)", re.I),
-    re.compile(r"rating[:\s]+(\d(?:\.\d)?)", re.I),
-    re.compile(r"\b(\d\.\d)\b\s*star", re.I),
-]
-_COUNT_RE = re.compile(r"([\d][\d,]{0,6})\+?\s*(?:reviews|ratings)", re.I)
+_COUNT_RE = re.compile(r"([\d][\d,]{0,7})\+?\s*(?:reviews|ratings)", re.I)
 
 
 def _parse_rating(text: str):
-    for rx in _RATING_RES:
-        m = rx.search(text or "")
+    """Parse a 0-5 star rating from review-page text/snippets. Normalises 10-point
+    scales (e.g. TrustRadius '8.7 out of 10') down to a 5-point scale."""
+    if not text:
+        return None
+    # explicit 5-point scale (e.g. "4.6/5", "4.6 out of 5")
+    m = re.search(r"(\d(?:\.\d)?)\s*(?:out of|/)\s*5\b", text, re.I)
+    if m:
+        v = float(m.group(1))
+        if 0 < v <= 5:
+            return round(v, 1)
+    # explicit 10-point scale -> halve
+    m = re.search(r"(\d{1,2}(?:\.\d)?)\s*(?:out of|/)\s*10\b", text, re.I)
+    if m:
+        v = float(m.group(1))
+        if 0 < v <= 10:
+            return round(v / 2, 1)
+    # "rated 4.6 stars" / "4.6 stars" / "4.6★" / "rating: 4.6"
+    for rx in (r"rated\s*(\d(?:\.\d)?)\s*stars?",
+               r"(\d\.\d)\s*(?:★|stars?)",
+               r"rating[:\s]+(\d(?:\.\d)?)\b"):
+        m = re.search(rx, text, re.I)
         if m:
-            try:
-                val = float(m.group(1))
-                if 0 < val <= 5:
-                    return round(val, 1)
-            except Exception:
-                pass
+            v = float(m.group(1))
+            if 0 < v <= 5:
+                return round(v, 1)
     return None
 
 
@@ -979,9 +988,10 @@ def _parse_review_count(text: str):
 
 async def discover_reviews(brand: str, domain: str) -> dict:
     """Find the brand's rating on each major (non-employee) review platform via
-    TinyFish search, parsing the star rating from the result title/snippet.
-    Returns overall average + per-platform breakdown. No LLM call."""
-    # de-dupe platform list while keeping order
+    TinyFish search. Runs a 'reviews' query (clean profile URL) plus a 'rating'
+    query (surfaces the star rating in the snippet), then parses rating +
+    review count from the combined result text. No LLM call."""
+    # de-dupe platform list while keeping order; drop employee-review hosts
     seen_hosts = set()
     plats = []
     for label, host in REVIEW_PLATFORMS:
@@ -991,34 +1001,50 @@ async def discover_reviews(brand: str, domain: str) -> dict:
         plats.append((label, host))
 
     queries = []
-    for label, host in plats:
+    qmap = []  # query index -> platform index
+    for pi, (label, host) in enumerate(plats):
         if host == "google.com":
-            queries.append(f'"{brand}" google reviews rating')
+            queries.append(f'"{brand}" google reviews rating stars')
+            qmap.append(pi)
+            queries.append(f'"{brand}" google customer rating')
+            qmap.append(pi)
         else:
             queries.append(f'"{brand}" reviews site:{host}')
+            qmap.append(pi)
+            queries.append(f'"{brand}" rating stars reviews site:{host}')
+            qmap.append(pi)
     all_results = await tf.tf_search_many(queries, max_results=3)
 
+    # group results per platform
+    per = [[] for _ in plats]
+    for qi, res in enumerate(all_results):
+        per[qmap[qi]].extend(res or [])
+
     platforms = []
-    for (label, host), results in zip(plats, all_results):
-        hit = None
-        for r in (results or []):
-            rd = tf.root_domain(tf.host_of(r.get("url", "")))
+    for pi, (label, host) in enumerate(plats):
+        results = per[pi]
+        # clean profile URL: real http link on the same host (google: any allowed host)
+        url = None
+        for r in results:
+            u = r.get("url") or ""
+            if not u.startswith("http"):
+                continue
+            rd = tf.root_domain(tf.host_of(u))
             if rd in _EXCLUDED_REVIEW_HOSTS:
                 continue
             if host == "google.com" or rd == host:
-                hit = r
+                url = u
                 break
-        if not hit and results:
-            hit = next((r for r in results if tf.root_domain(tf.host_of(r.get("url", ""))) not in _EXCLUDED_REVIEW_HOSTS), None)
-        if not hit:
-            platforms.append({"platform": label, "host": host, "found": False,
-                              "rating": None, "review_count": None, "url": None, "snippet": ""})
-            continue
-        blob = f"{hit.get('title', '')} {hit.get('snippet', '')}"
+        # rating text: prefer same-host results, else fall back to all results
+        same = [r for r in results if tf.root_domain(tf.host_of(r.get("url", ""))) == host] or results
+        blob_same = " ".join(f"{r.get('title', '')} {r.get('snippet', '')}" for r in same)
+        blob_all = " ".join(f"{r.get('title', '')} {r.get('snippet', '')}" for r in results)
+        rating = _parse_rating(blob_same) or _parse_rating(blob_all)
+        count = _parse_review_count(blob_same) or _parse_review_count(blob_all)
+        snippet = next((r.get("snippet")[:180] for r in same if r.get("snippet")), "")
         platforms.append({
-            "platform": label, "host": host, "found": True,
-            "rating": _parse_rating(blob), "review_count": _parse_review_count(blob),
-            "url": hit.get("url"), "snippet": (hit.get("snippet") or "")[:180],
+            "platform": label, "host": host, "found": bool(url or rating),
+            "rating": rating, "review_count": count, "url": url, "snippet": snippet,
         })
 
     rated = [p["rating"] for p in platforms if p.get("rating")]
