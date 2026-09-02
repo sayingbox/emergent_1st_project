@@ -2158,6 +2158,10 @@ async def _run_project_scan(project_id: str, user_id: str, domain: str):
             "brand_presence": result.get("brand_presence") or {},
             "pr_list": result.get("pr_list") or [],
             "competitor_intel": result.get("competitor_intel") or {},
+            "llm_distribution": result.get("llm_distribution") or [],
+            "mention_countries": result.get("mention_countries") or [],
+            "reviews": result.get("reviews") or {},
+            "citation_opportunities": result.get("citation_opportunities") or [],
             "error": result.get("error"),
         }
         await db.projects.update_one({"id": project_id}, {"$set": set_doc})

@@ -604,20 +604,31 @@ def brand_prompt(domain: str, pages: list[dict]) -> str:
     return f"""DOMAIN: {domain}
 CRAWL: {json.dumps(ctx)[:8000]}
 
-Return JSON: {{"brand":"official name","summary":"1-2 sentence factual description","services":["service 1","service 2","service 3"]}}"""
+Return JSON: {{"brand":"official name","summary":"1-2 sentence factual description","services":["service 1","service 2","service 3"],"countries":[{{"country":"United States","share_pct":40}}]}}
+For "countries": estimate the top 4-6 countries where this brand is most discussed / has the largest audience & AI-search visibility. share_pct are integers that roughly sum to 100, sorted high→low."""
 
 
 async def discover_brand(domain: str, pages: list[dict], llm_call) -> dict:
     try:
         res = await llm_call(BRAND_SYSTEM, brand_prompt(domain, pages), f"brand-{domain}")
+        countries = []
+        for c in (res.get("countries") or []):
+            if isinstance(c, dict) and c.get("country"):
+                try:
+                    pct = int(round(float(c.get("share_pct") or 0)))
+                except Exception:
+                    pct = 0
+                countries.append({"country": str(c["country"]).strip(), "share_pct": max(0, min(100, pct))})
+        countries = sorted(countries, key=lambda x: -x["share_pct"])[:6]
         return {
             "brand": (res.get("brand") or "").strip() or domain,
             "summary": (res.get("summary") or "").strip(),
             "services": [s.strip() for s in (res.get("services") or []) if s and isinstance(s, str)][:8],
+            "countries": countries,
         }
     except Exception as e:
         logger.warning(f"discover_brand: LLM failed: {e}")
-        return {"brand": domain, "summary": "", "services": []}
+        return {"brand": domain, "summary": "", "services": [], "countries": []}
 
 
 # ----------------------- top-level runner ----------------------------------
@@ -811,13 +822,13 @@ async def competitor_intel(brand: str, summary: str, services: list, brand_platf
               "Return ONLY valid minified JSON.")
     prompt = (f"BRAND: {brand}\nSUMMARY: {summary}\nSERVICES: {', '.join(services or [])}\n\n"
               'Return JSON: {"competitors":[{"name":"","domain":"","why":"one line"}]}. '
-              "Give exactly 4 real, well-known direct competitors (not the brand itself).")
+              "Give exactly 6 real, well-known direct competitors (not the brand itself).")
     comp = {}
     try:
         comp = await llm_call(system, prompt, f"proj-comp-{secrets.token_hex(3)}", max_tokens=1200)
     except Exception as e:
         logger.warning(f"competitor llm failed: {e}")
-    competitors = [c for c in (comp.get("competitors") or []) if isinstance(c, dict) and c.get("name")][:4]
+    competitors = [c for c in (comp.get("competitors") or []) if isinstance(c, dict) and c.get("name")][:6]
     if not competitors:
         return {"competitors": [], "share_of_voice": [], "gap_analysis": []}
 
@@ -885,11 +896,199 @@ async def competitor_intel(brand: str, summary: str, services: list, brand_platf
     }
 
 
+# ----------------------- LLM engine distribution (derived, no LLM cost) ----
+_ENGINE_LABELS = {
+    "chatgpt": "ChatGPT", "claude": "Claude", "perplexity": "Perplexity",
+    "google_ai": "Google AI Overviews", "gemini": "Gemini", "copilot": "Copilot",
+    "grok": "Grok",
+}
+
+
+def llm_distribution(rankings: list[dict]) -> list[dict]:
+    """Aggregate how many prompts each AI engine mentions the brand in — derived
+    from the prompt-ranking engine flags, so NO extra LLM call is made."""
+    counts: dict = {}
+    order: list = []
+    for r in rankings or []:
+        for eng, ok in (r.get("engines") or {}).items():
+            if eng not in counts:
+                counts[eng] = 0
+                order.append(eng)
+            if ok:
+                counts[eng] += 1
+    total = sum(counts.values()) or 1
+    out = [{
+        "engine": _ENGINE_LABELS.get(k, k.replace("_", " ").title()),
+        "key": k,
+        "mentions": counts[k],
+        "share_pct": round(counts[k] / total * 100),
+    } for k in order]
+    out.sort(key=lambda x: -x["mentions"])
+    return out
+
+
+# ----------------------- Reviews (TinyFish search, no LLM cost) -------------
+# Excludes employee-review platforms (Glassdoor, Indeed, AmbitionBox) by design.
+REVIEW_PLATFORMS = [
+    ("G2", "g2.com"),
+    ("Google", "google.com"),
+    ("Capterra", "capterra.com"),
+    ("Trustpilot", "trustpilot.com"),
+    ("TrustRadius", "trustradius.com"),
+    ("Product Hunt", "producthunt.com"),
+    ("Capterra", "capterra.com"),
+    ("Clutch", "clutch.co"),
+    ("GetApp", "getapp.com"),
+    ("Software Advice", "softwareadvice.com"),
+    ("Gartner Peer Insights", "gartner.com"),
+    ("Yelp", "yelp.com"),
+]
+_EXCLUDED_REVIEW_HOSTS = {"glassdoor.com", "indeed.com", "ambitionbox.com"}
+
+_RATING_RES = [
+    re.compile(r"(\d(?:\.\d)?)\s*(?:out of|/)\s*5", re.I),
+    re.compile(r"(\d\.\d)\s*(?:★|stars?)", re.I),
+    re.compile(r"rating[:\s]+(\d(?:\.\d)?)", re.I),
+    re.compile(r"\b(\d\.\d)\b\s*star", re.I),
+]
+_COUNT_RE = re.compile(r"([\d][\d,]{0,6})\+?\s*(?:reviews|ratings)", re.I)
+
+
+def _parse_rating(text: str):
+    for rx in _RATING_RES:
+        m = rx.search(text or "")
+        if m:
+            try:
+                val = float(m.group(1))
+                if 0 < val <= 5:
+                    return round(val, 1)
+            except Exception:
+                pass
+    return None
+
+
+def _parse_review_count(text: str):
+    m = _COUNT_RE.search(text or "")
+    if m:
+        try:
+            return int(m.group(1).replace(",", ""))
+        except Exception:
+            return None
+    return None
+
+
+async def discover_reviews(brand: str, domain: str) -> dict:
+    """Find the brand's rating on each major (non-employee) review platform via
+    TinyFish search, parsing the star rating from the result title/snippet.
+    Returns overall average + per-platform breakdown. No LLM call."""
+    # de-dupe platform list while keeping order
+    seen_hosts = set()
+    plats = []
+    for label, host in REVIEW_PLATFORMS:
+        if host in seen_hosts or host in _EXCLUDED_REVIEW_HOSTS:
+            continue
+        seen_hosts.add(host)
+        plats.append((label, host))
+
+    queries = []
+    for label, host in plats:
+        if host == "google.com":
+            queries.append(f'"{brand}" google reviews rating')
+        else:
+            queries.append(f'"{brand}" reviews site:{host}')
+    all_results = await tf.tf_search_many(queries, max_results=3)
+
+    platforms = []
+    for (label, host), results in zip(plats, all_results):
+        hit = None
+        for r in (results or []):
+            rd = tf.root_domain(tf.host_of(r.get("url", "")))
+            if rd in _EXCLUDED_REVIEW_HOSTS:
+                continue
+            if host == "google.com" or rd == host:
+                hit = r
+                break
+        if not hit and results:
+            hit = next((r for r in results if tf.root_domain(tf.host_of(r.get("url", ""))) not in _EXCLUDED_REVIEW_HOSTS), None)
+        if not hit:
+            platforms.append({"platform": label, "host": host, "found": False,
+                              "rating": None, "review_count": None, "url": None, "snippet": ""})
+            continue
+        blob = f"{hit.get('title', '')} {hit.get('snippet', '')}"
+        platforms.append({
+            "platform": label, "host": host, "found": True,
+            "rating": _parse_rating(blob), "review_count": _parse_review_count(blob),
+            "url": hit.get("url"), "snippet": (hit.get("snippet") or "")[:180],
+        })
+
+    rated = [p["rating"] for p in platforms if p.get("rating")]
+    overall = round(sum(rated) / len(rated), 1) if rated else None
+    total_reviews = sum(p["review_count"] for p in platforms if p.get("review_count")) or 0
+    return {
+        "overall_score": overall,
+        "rated_platform_count": len(rated),
+        "platform_count": len(platforms),
+        "total_reviews": total_reviews,
+        "platforms": platforms,
+    }
+
+
+# ----------------------- Citation opportunities (TinyFish, no LLM cost) -----
+_COMMUNITY_SITES = [
+    ("Reddit", "reddit.com", "Forum"),
+    ("Quora", "quora.com", "Q&A"),
+    ("Stack Exchange", "stackexchange.com", "Q&A"),
+    ("Stack Overflow", "stackoverflow.com", "Q&A"),
+    ("Hacker News", "ycombinator.com", "Forum"),
+    ("Indie Hackers", "indiehackers.com", "Community"),
+    ("Dev.to", "dev.to", "Community"),
+    ("Product Hunt", "producthunt.com", "Community"),
+    ("Medium", "medium.com", "Blog"),
+    ("GitHub", "github.com", "Community"),
+]
+
+
+async def discover_citation_opportunities(brand: str, services: list, domain: str) -> list[dict]:
+    """Find real communities / forums / Q&A threads discussing the brand's topics
+    via TinyFish search — places to engage to earn AI citations. No LLM call."""
+    topics = [s for s in (services or []) if s][:3] or [brand]
+    primary = topics[0]
+    plan = []  # (label, host, type, topic)
+    queries = []
+    for (label, host, ptype) in _COMMUNITY_SITES:
+        queries.append(f"{primary} site:{host}")
+        plan.append((label, host, ptype, primary))
+    if len(topics) > 1:
+        for (label, host, ptype) in _COMMUNITY_SITES[:4]:
+            queries.append(f"{topics[1]} site:{host}")
+            plan.append((label, host, ptype, topics[1]))
+
+    results = await tf.tf_search_many(queries, max_results=3)
+    out = []
+    seen = set()
+    for (label, host, ptype, topic), res in zip(plan, results):
+        for r in (res or [])[:3]:
+            url = r.get("url") or ""
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            out.append({
+                "platform": label,
+                "type": ptype,
+                "topic": topic,
+                "title": (r.get("title") or "")[:140],
+                "url": url,
+                "snippet": (r.get("snippet") or "")[:180],
+            })
+    return out[:30]
+
+
 async def run_full_project_scan(domain: str, llm_call, max_pages: int = DEFAULT_MAX_PAGES) -> dict:
     """
     Orchestrator: deep-crawl the domain, analyze each page, discover the brand via LLM,
     find citations, rank prompts, plus extended audit (technical readiness, brand
-    presence, PR list, competitor share-of-voice & gap analysis). Returns a dict.
+    presence, PR list, competitor share-of-voice & gap analysis, LLM distribution,
+    countries, reviews & citation opportunities). Returns a dict.
     """
     # 1) Deep crawl
     raw_pages = await deep_crawl(domain, max_pages=max_pages)
@@ -914,9 +1113,11 @@ async def run_full_project_scan(domain: str, llm_call, max_pages: int = DEFAULT_
 
     # 5) Extended audit sections
     technical = technical_readiness(analyzed, raw_pages, domain)
-    brand_presence, pr_list = await asyncio.gather(
+    brand_presence, pr_list, reviews, opportunities = await asyncio.gather(
         brand_presence_scan(brand["brand"], domain),
         pr_list_scan(brand["brand"], domain),
+        discover_reviews(brand["brand"], domain),
+        discover_citation_opportunities(brand["brand"], brand["services"], domain),
     )
     competitor = await competitor_intel(
         brand["brand"], brand["summary"], brand["services"], brand_presence.get("platforms", []), llm_call
@@ -934,6 +1135,10 @@ async def run_full_project_scan(domain: str, llm_call, max_pages: int = DEFAULT_
         "brand_presence": brand_presence,
         "pr_list": pr_list,
         "competitor_intel": competitor,
+        "llm_distribution": llm_distribution(rankings),
+        "mention_countries": brand.get("countries", []),
+        "reviews": reviews,
+        "citation_opportunities": opportunities,
         **aggregates,
     }
 

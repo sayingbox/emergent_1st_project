@@ -10,7 +10,7 @@ import { PageHeader, EmptyState } from "@/components/ui-bits";
 import {
   Loader2, RefreshCcw, ArrowLeft, ExternalLink, CheckCircle2, XCircle,
   AlertTriangle, Link2, Activity, FileText, Globe, ChevronDown, ChevronRight,
-  Zap, ShieldCheck, Newspaper, Users, Gauge,
+  Zap, ShieldCheck, Newspaper, Users, Gauge, Bot, MapPin, MessageSquare, Star,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -86,6 +86,10 @@ export default function ProjectDetail() {
   const ci = project.competitor_intel || {};
   const sov = ci.share_of_voice || [];
   const gaps = ci.gap_analysis || [];
+  const llmDist = project.llm_distribution || [];
+  const countries = project.mention_countries || [];
+  const reviews = project.reviews || {};
+  const opps = project.citation_opportunities || [];
   const brand = project.brand?.brand || project.domain;
 
   return (
@@ -123,6 +127,52 @@ export default function ProjectDetail() {
           <MiniStat label="AI citations" value={project.ai_citations_count || 0} tone={project.ai_citations_count > 0 ? "ok" : "warn"} />
           <MiniStat label="Prompts ranking" value={`${project.prompt_top_count || 0}/${project.prompt_rankings_count || 0}`} tone={project.prompt_top_count > 0 ? "ok" : "warn"} />
         </div>
+      </div>
+
+      {/* Audit insights: Distribution by LLM + By Country */}
+      <div className="grid lg:grid-cols-2 gap-6 mb-8">
+        <Card className="p-5 rounded-xl border-border/60" data-testid="llm-distribution">
+          <h4 className="font-head font-bold text-sm mb-1 flex items-center gap-2"><Bot size={15} className="text-[#6366F1]" /> Distribution by LLM</h4>
+          <p className="text-xs text-muted-foreground mb-4">How your brand&apos;s mentions spread across AI answer engines (from prompt-ranking simulations).</p>
+          {llmDist.length === 0 ? (
+            <div className="text-sm text-muted-foreground">{processing ? "Simulating engines…" : "No engine data yet."}</div>
+          ) : (
+            <div className="space-y-3">
+              {llmDist.map((e, i) => (
+                <div key={i} data-testid={`llm-row-${i}`}>
+                  <div className="flex items-center justify-between text-sm mb-1">
+                    <span className="font-medium">{e.engine}</span>
+                    <span className="tabular-nums text-xs text-muted-foreground">{e.mentions} · {e.share_pct}%</span>
+                  </div>
+                  <div className="h-2 rounded-full bg-muted overflow-hidden">
+                    <div className="h-full rounded-full" style={{ width: `${e.share_pct}%`, background: "#6366F1" }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+        <Card className="p-5 rounded-xl border-border/60" data-testid="by-country">
+          <h4 className="font-head font-bold text-sm mb-1 flex items-center gap-2"><MapPin size={15} className="text-[#10b981]" /> By Country</h4>
+          <p className="text-xs text-muted-foreground mb-4">Countries where your brand is most discussed & surfaced in AI search.</p>
+          {countries.length === 0 ? (
+            <div className="text-sm text-muted-foreground">{processing ? "Estimating geography…" : "No country data yet."}</div>
+          ) : (
+            <div className="space-y-3">
+              {countries.map((c, i) => (
+                <div key={i} data-testid={`country-row-${i}`}>
+                  <div className="flex items-center justify-between text-sm mb-1">
+                    <span className="font-medium">{c.country}</span>
+                    <span className="tabular-nums text-xs text-muted-foreground">{c.share_pct}%</span>
+                  </div>
+                  <div className="h-2 rounded-full bg-muted overflow-hidden">
+                    <div className="h-full rounded-full" style={{ width: `${c.share_pct}%`, background: "#10b981" }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
       </div>
 
       {/* Drill-in cards */}
@@ -165,6 +215,8 @@ export default function ProjectDetail() {
           <TabsTrigger value="brand" data-testid="tab-brand">Brand ({bp.found_count || 0})</TabsTrigger>
           <TabsTrigger value="pr" data-testid="tab-pr">PR ({prList.length})</TabsTrigger>
           <TabsTrigger value="competitors" data-testid="tab-competitors">Competitors</TabsTrigger>
+          <TabsTrigger value="opportunities" data-testid="tab-opportunities">Citation Opportunities ({opps.length})</TabsTrigger>
+          <TabsTrigger value="reviews" data-testid="tab-reviews">Reviews</TabsTrigger>
           <TabsTrigger value="citations" data-testid="tab-citations">Web Citations ({citations.length})</TabsTrigger>
           <TabsTrigger value="rankings" data-testid="tab-rankings">Prompt Rankings ({rankings.length})</TabsTrigger>
         </TabsList>
@@ -474,6 +526,79 @@ export default function ProjectDetail() {
                 </div>
               ))}
             </Card>
+          )}
+        </TabsContent>
+
+        <TabsContent value="opportunities" className="mt-4" data-testid="opportunities-panel">
+          {opps.length === 0 ? (
+            <EmptyState icon={MessageSquare} text={processing ? "Finding communities & discussions…" : "No citation opportunities found yet."} />
+          ) : (
+            <>
+              <p className="text-sm text-muted-foreground mb-4">Real communities, forums & Q&amp;A threads discussing your topics — engage here to earn AI citations.</p>
+              <div className="grid md:grid-cols-2 gap-3">
+                {opps.map((o, i) => (
+                  <Card key={i} className="p-4 rounded-xl border-border/60 flex items-start gap-3" data-testid={`opportunity-${i}`}>
+                    <div className="w-9 h-9 rounded-lg bg-muted grid place-items-center shrink-0 overflow-hidden">
+                      <img src={favicon(o.url, o.platform)} alt="" className="w-6 h-6" onError={(e) => { e.target.style.display = "none"; }} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-semibold text-sm">{o.platform}</span>
+                        <Badge className="rounded-md border bg-muted text-foreground text-[11px]">{o.type}</Badge>
+                        {o.topic ? <span className="text-[11px] text-muted-foreground truncate">on &ldquo;{o.topic}&rdquo;</span> : null}
+                      </div>
+                      <p className="font-head font-bold text-[14px] mt-0.5 line-clamp-2">{o.title || o.url}</p>
+                      {o.snippet ? <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{o.snippet}</p> : null}
+                      <a href={o.url} target="_blank" rel="noreferrer" className="text-xs text-[#6366F1] font-medium inline-flex items-center gap-1 mt-1.5 hover:underline">Open discussion <ExternalLink size={11} /></a>
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            </>
+          )}
+        </TabsContent>
+
+        <TabsContent value="reviews" className="mt-4" data-testid="reviews-panel">
+          {(!reviews.platforms || reviews.platforms.length === 0) ? (
+            <EmptyState icon={Star} text={processing ? "Fetching reviews across platforms…" : "No review data found yet."} />
+          ) : (
+            <>
+              <div className="grid sm:grid-cols-3 gap-4 mb-5">
+                <Card className="p-6 rounded-xl border-border/60 flex flex-col items-center justify-center text-center" data-testid="reviews-overall">
+                  <div className="text-[10px] uppercase tracking-widest font-bold text-muted-foreground mb-1">Overall score</div>
+                  <div className="text-4xl font-bold text-amber-500 flex items-center gap-1">
+                    {reviews.overall_score ?? "—"}<Star size={22} className="fill-amber-400 text-amber-400" />
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-1">avg of {reviews.rated_platform_count || 0} rated platforms</div>
+                </Card>
+                <MiniStat label="Platforms checked" value={reviews.platform_count || 0} />
+                <MiniStat label="Total reviews" value={(reviews.total_reviews || 0).toLocaleString()} tone={reviews.total_reviews > 0 ? "ok" : "warn"} />
+              </div>
+              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {reviews.platforms.map((p, i) => (
+                  <div key={i} className={`p-4 rounded-xl border ${p.found ? "border-border/60 bg-card" : "border-dashed border-border/60 bg-muted/30"}`} data-testid={`review-platform-${i}`}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <img src={favicon(p.url, p.host)} alt="" className="w-5 h-5 rounded" onError={(e) => { e.target.style.display = "none"; }} />
+                        <span className="font-semibold text-sm truncate">{p.platform}</span>
+                      </div>
+                      {p.rating ? (
+                        <span className="text-sm font-bold text-amber-500 flex items-center gap-0.5">{p.rating}<Star size={13} className="fill-amber-400 text-amber-400" /></span>
+                      ) : <span className="text-xs text-muted-foreground">{p.found ? "N/A" : "—"}</span>}
+                    </div>
+                    <div className="text-[11px] text-muted-foreground mt-2">
+                      {p.review_count ? `${p.review_count.toLocaleString()} reviews` : (p.found ? "Profile found" : "No profile found")}
+                    </div>
+                    {p.url ? (
+                      <a href={p.url} target="_blank" rel="noreferrer" className="text-[11px] text-[#6366F1] font-medium inline-flex items-center gap-1 mt-1 hover:underline truncate">
+                        <ExternalLink size={10} className="shrink-0" /> <span className="truncate">View profile</span>
+                      </a>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+              <p className="text-[11px] text-muted-foreground mt-4">Employee-review sites (Glassdoor, Indeed, AmbitionBox) are excluded. Ratings fetched via TinyFish web search.</p>
+            </>
           )}
         </TabsContent>
       </Tabs>

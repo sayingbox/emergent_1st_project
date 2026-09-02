@@ -20,7 +20,12 @@ Imported from GitHub `sayingbox/emergent_1st_project`.
 - Auth (login/register/me/logout), admin seed on startup
 - Projects (CRUD), Overview, Domain analysis, Visibility, Citations, Sentiment,
   Reddit, Brand consistency, PR coverage, AI Agent, Optimizer, History, Analysis detail
+- Project dashboard extras: Distribution by LLM + By Country (audit insights),
+  6 competitors, Citation Opportunities tab (TinyFish community/forum/Q&A search),
+  Reviews tab (TinyFish ratings across G2/Capterra/Trustpilot/TrustRadius/ProductHunt/
+  Clutch/GetApp/SoftwareAdvice/Gartner/Yelp/Google; excludes Glassdoor/Indeed/AmbitionBox)
 - LLM analyses via Emergent Universal LLM key (OpenAI/Anthropic/Gemini)
+- TinyFish API key wired (real web/news search + fetch); DuckDuckGo fallback if absent
 - Rendering via Playwright Chromium (installed at /pw-browsers)
 
 ## Deferred
