@@ -29,6 +29,7 @@ Imported from GitHub `sayingbox/emergent_1st_project`.
 - Rendering via Playwright Chromium (installed at /pw-browsers)
 
 ## Deferred
+- Audit report v2 (project detail): Pages crawl limit 50 + homepage first; per-issue & site-level "how to fix" suggestions; Brand adds Wikipedia + Twitter/X; Competitors metric now AI-engine mention share (ChatGPT/Perplexity/Gemini/Claude/Grok/Copilot) with engine-based Gap Analysis; Web Citations up to 40 with source title + picked-up-by engines; Prompt Rankings up to 25.
 - Resend/OTP admin flow (skipped per user choice)
 - TinyFish API key (optional; empty by default)
 - Full backend LLM test suite (`backend_test.py`, `aeo_optimizer_test.py`) — will consume LLM credits

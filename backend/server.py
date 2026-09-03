@@ -2236,8 +2236,22 @@ async def get_project(project_id: str, user: dict = Depends(get_current_user)):
     if not doc:
         raise HTTPException(status_code=404, detail="Project not found")
     pages = await db.project_pages.find({"project_id": project_id}, {"_id": 0}).sort("seo_score", 1).to_list(500)
-    citations = await db.project_citations.find({"project_id": project_id}, {"_id": 0}).to_list(200)
-    rankings = await db.project_rankings.find({"project_id": project_id}, {"_id": 0}).to_list(50)
+    citations = await db.project_citations.find({"project_id": project_id}, {"_id": 0}).to_list(500)
+    rankings = await db.project_rankings.find({"project_id": project_id}, {"_id": 0}).to_list(500)
+
+    # Always surface the homepage first, regardless of score-based ordering.
+    def _is_homepage(u: str) -> bool:
+        try:
+            from urllib.parse import urlparse
+            p = urlparse(u if u.startswith("http") else "https://" + u)
+            return (p.path or "/").rstrip("/") == "" and not p.query
+        except Exception:
+            return False
+    homepages = [p for p in pages if _is_homepage(p.get("url", ""))]
+    if homepages:
+        rest = [p for p in pages if p not in homepages]
+        pages = homepages + rest
+
     return {**doc, "pages": pages, "citations": citations, "rankings": rankings}
 
 

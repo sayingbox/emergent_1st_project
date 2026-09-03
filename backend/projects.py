@@ -27,11 +27,11 @@ logger = logging.getLogger("citetail.projects")
 
 # ----------------------- config --------------------------------------------
 
-DEFAULT_MAX_PAGES = 25
+DEFAULT_MAX_PAGES = 50
 CRAWL_TIMEOUT_S = 12
 CRAWL_CONCURRENCY = 6
-CITATION_CANDIDATES = 15
-RANKING_PROMPTS = 8
+CITATION_CANDIDATES = 40
+RANKING_PROMPTS = 25
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -235,6 +235,28 @@ ISSUE_DEFS = {
                         "message": "No author byline or Author schema — hurts E-E-A-T signals."},
 }
 
+# Concrete "how to fix" guidance shown next to every flagged issue.
+ISSUE_FIXES = {
+    "missing_title": "Add a unique, descriptive <title> tag (50-60 chars) with your primary keyword near the front.",
+    "short_title": "Expand the title to 50-60 characters and include descriptive keywords and your brand.",
+    "long_title": "Trim the title to under 60 characters so it isn't cut off in search results.",
+    "missing_meta_description": "Add a <meta name=\"description\"> of 140-160 chars that summarises the page and invites clicks.",
+    "thin_content": "Expand the page to 600+ words of genuinely useful content covering the topic in depth.",
+    "no_h1": "Add exactly one <h1> that states the page's main topic.",
+    "multiple_h1": "Keep a single <h1> and demote the rest to <h2>/<h3> to create a clear heading hierarchy.",
+    "no_schema": "Add JSON-LD structured data (e.g. Organization, Article, Product) so engines understand the page.",
+    "images_missing_alt": "Add descriptive alt text to every <img> for accessibility and image search.",
+    "slow_page": "Compress images, enable caching/CDN and defer non-critical JS to get load time under 3s.",
+    "large_page": "Reduce HTML/JS/CSS weight, lazy-load below-the-fold assets and minify to shrink the payload under 500KB.",
+    "broken_internal_links": "Find and fix or remove broken internal links (audit with a crawler).",
+    "no_canonical": "Add a <link rel=\"canonical\"> pointing to the preferred URL to avoid duplicate-content issues.",
+    "no_open_graph": "Add OpenGraph tags (og:title, og:description, og:image) for rich social/link previews.",
+    "no_faq_schema": "Add an FAQ section marked up with FAQPage schema — AI engines love direct Q&A pairs.",
+    "no_answer_paragraph": "Open the page with a concise 40-60 word paragraph that directly answers the core question.",
+    "no_citation_statistics": "Include quotable stats with numbers (%, $, counts) and cite sources — AI engines prefer hard data.",
+    "no_author_info": "Add a visible author byline plus Author/Person schema to strengthen E-E-A-T.",
+}
+
 
 def _visible_words(soup: BeautifulSoup) -> int:
     for t in soup(["script", "style", "noscript", "nav", "footer", "header", "svg", "form"]):
@@ -319,7 +341,8 @@ def analyze_page(page: dict) -> dict:
 
     def add(code):
         d = ISSUE_DEFS[code]
-        issues.append({"code": code, "severity": d["severity"], "category": d["category"], "message": d["message"]})
+        issues.append({"code": code, "severity": d["severity"], "category": d["category"],
+                       "message": d["message"], "fix": ISSUE_FIXES.get(code, "")})
 
     # SEO issues
     if not title:
@@ -457,8 +480,11 @@ BRAND: {brand_name}
 SUMMARY: {brand_summary}
 
 Return JSON:
-{{"candidates":[{{"url":"https://...","source_domain":"example.com","type":"official|editorial|community|reference|competitor","why":"one-line reason"}}]}}
-Provide exactly 15 candidates ranked by likelihood. Prefer well-known authoritative sites."""
+{{"candidates":[{{"url":"https://...","title":"the article/page headline","source_domain":"example.com","type":"official|editorial|community|reference|competitor","why":"one-line reason this page mentions the brand","engines":["chatgpt","perplexity","gemini","claude","grok","copilot","google_ai"]}}]}}
+- "url" is the SPECIFIC page/article/blog post where the brand is mentioned (not just a homepage).
+- "title" is that page's headline/title.
+- "engines" = which AI search engines would most likely surface/cite this source for the brand (subset of the list).
+Provide exactly 40 candidates ranked by likelihood. Prefer well-known authoritative sites and real article-style URLs."""
 
 
 def _extract_snippet(html: str, needle: str, ctx: int = 160) -> str:
@@ -525,11 +551,15 @@ async def discover_citations(domain: str, brand_name: str, brand_summary: str, l
                     verified = True
                     snippet = s
                     break
+        _ENG = {"chatgpt", "perplexity", "gemini", "claude", "grok", "copilot", "google_ai"}
+        engines = [e for e in (c.get("engines") or []) if isinstance(e, str) and e.lower() in _ENG]
         return {
             "url": u,
+            "title": (c.get("title") or "").strip()[:160],
             "source_domain": c.get("source_domain") or (urlparse(u).netloc or "").lower(),
             "type": c.get("type") or "reference",
             "why": c.get("why") or "",
+            "engines": engines or ["chatgpt", "perplexity"],
             "http_status": status,
             "verified": verified,
             "snippet": snippet[:400],
@@ -637,7 +667,9 @@ async def discover_brand(domain: str, pages: list[dict], llm_call) -> dict:
 # ----------------------- extended audit sections ---------------------------
 
 _PROJECT_PLATFORMS = [
+    ("Wikipedia", "reference", "wikipedia.org"),
     ("LinkedIn", "social", "linkedin.com"),
+    ("Twitter / X", "social", "twitter.com"),
     ("YouTube", "social", "youtube.com"),
     ("Reddit", "social", "reddit.com"),
     ("Crunchbase", "directories", "crunchbase.com"),
@@ -713,12 +745,39 @@ def technical_readiness(analyzed: list, raw: list, domain: str) -> dict:
     avg_load = round(sum(load_times) / n)
     med_load = round(_median(load_times))
     speed_score = max(0, min(100, round(100 - (avg_load / 40))))
+    schema_pct = round(has_schema / n * 100)
+    canonical_pct = round(has_canonical / n * 100)
     crawl_score = round(
         (ok_pages / n) * 40 +
         (has_canonical / n) * 20 +
         (has_schema / n) * 20 +
         (20 if (sitemap_ok or sitemap_in_robots) else 0)
     )
+
+    # Site-level technical issues, each with a concrete fix suggestion.
+    tech_issues = []
+    if not root.startswith("https"):
+        tech_issues.append({"severity": "high", "title": "Site not served over HTTPS",
+                            "fix": "Install a TLS certificate and force HTTPS with a 301 redirect from HTTP."})
+    if not robots_ok:
+        tech_issues.append({"severity": "medium", "title": "robots.txt not found",
+                            "fix": "Add a /robots.txt that allows crawling and points to your sitemap."})
+    if not (sitemap_ok or sitemap_in_robots):
+        tech_issues.append({"severity": "medium", "title": "No XML sitemap detected",
+                            "fix": "Publish /sitemap.xml listing all indexable URLs and reference it in robots.txt."})
+    if len(slow_pages) > 0:
+        tech_issues.append({"severity": "high", "title": f"{len(slow_pages)} page(s) load slower than 3s",
+                            "fix": "Optimise images, enable caching/CDN and defer non-critical JS on the slow pages."})
+    if schema_pct < 50:
+        tech_issues.append({"severity": "medium", "title": f"Low structured-data coverage ({schema_pct}%)",
+                            "fix": "Add JSON-LD schema (Organization/Article/Product/FAQ) to more pages."})
+    if canonical_pct < 50:
+        tech_issues.append({"severity": "low", "title": f"Low canonical coverage ({canonical_pct}%)",
+                            "fix": "Add a rel=canonical link to every page to consolidate duplicate URLs."})
+    if (avg_load or 0) > 2500:
+        tech_issues.append({"severity": "medium", "title": f"High average load time ({avg_load} ms)",
+                            "fix": "Reduce server response time, compress assets and use a CDN to speed up delivery."})
+
     return {
         "speed_score": speed_score,
         "crawl_score": crawl_score,
@@ -729,11 +788,12 @@ def technical_readiness(analyzed: list, raw: list, domain: str) -> dict:
         "slowest_pages": slow_pages[:5],
         "pages_ok": ok_pages,
         "pages_total": len(analyzed),
-        "schema_coverage_pct": round(has_schema / n * 100),
-        "canonical_coverage_pct": round(has_canonical / n * 100),
+        "schema_coverage_pct": schema_pct,
+        "canonical_coverage_pct": canonical_pct,
         "robots_txt_found": robots_ok,
         "sitemap_found": bool(sitemap_ok or sitemap_in_robots),
         "https": root.startswith("https"),
+        "tech_issues": tech_issues,
     }
 
 
@@ -815,83 +875,74 @@ async def pr_list_scan(brand: str, domain: str) -> list:
     return press
 
 
+AI_ENGINES = [("chatgpt", "ChatGPT"), ("perplexity", "Perplexity"), ("gemini", "Gemini"),
+              ("claude", "Claude"), ("grok", "Grok"), ("copilot", "Copilot")]
+
+
 async def competitor_intel(brand: str, summary: str, services: list, brand_platforms: list, llm_call) -> dict:
-    """1 LLM call to find competitors, then REAL presence per competitor via TinyFish.
-    Computes AI Share of Voice + Gap Analysis (where competitors are cited but you aren't)."""
-    system = ("You identify a brand's closest direct competitors for AI-search visibility analysis. "
-              "Return ONLY valid minified JSON.")
+    """1 LLM call: find the brand's closest competitors AND estimate how visible each one
+    (and the brand itself) is across AI search engines. Produces an AI-engine-mention
+    share-of-voice + a Gap Analysis of engines where competitors are mentioned but the
+    brand is not. No extra LLM call vs. before."""
+    engine_keys = [k for k, _ in AI_ENGINES]
+    label_of = dict(AI_ENGINES)
+    engines_csv = ", ".join(engine_keys)
+    system = ("You are a GEO/AEO analyst. You identify a brand's closest direct competitors and estimate "
+              "how visible each one (and the brand itself) is across AI search engines. Return ONLY valid minified JSON.")
     prompt = (f"BRAND: {brand}\nSUMMARY: {summary}\nSERVICES: {', '.join(services or [])}\n\n"
-              'Return JSON: {"competitors":[{"name":"","domain":"","why":"one line"}]}. '
+              f"For this product category, estimate whether each brand is typically MENTIONED or RECOMMENDED in "
+              f"answers from these AI search engines: {engines_csv}. Base booleans on real market prominence.\n"
+              'Return JSON: {"you":{"engines":{"chatgpt":true,"perplexity":false,"gemini":false,"claude":false,"grok":false,"copilot":false}},'
+              '"competitors":[{"name":"","domain":"","why":"one line","engines":{"chatgpt":true,"perplexity":true,"gemini":false,"claude":false,"grok":false,"copilot":false}}]}. '
               "Give exactly 6 real, well-known direct competitors (not the brand itself).")
     comp = {}
     try:
-        comp = await llm_call(system, prompt, f"proj-comp-{secrets.token_hex(3)}", max_tokens=1200)
+        comp = await llm_call(system, prompt, f"proj-comp-{secrets.token_hex(3)}", max_tokens=2200)
     except Exception as e:
         logger.warning(f"competitor llm failed: {e}")
     competitors = [c for c in (comp.get("competitors") or []) if isinstance(c, dict) and c.get("name")][:6]
     if not competitors:
-        return {"competitors": [], "share_of_voice": [], "gap_analysis": []}
+        return {"competitors": [], "share_of_voice": [], "engine_presence": [], "gap_analysis": [],
+                "engines": engine_keys, "engine_labels": [label_of[k] for k in engine_keys]}
 
-    # Real presence for each competitor across key platforms (TinyFish or DuckDuckGo fallback)
-    all_q = []
+    def norm_engines(e):
+        e = e or {}
+        return {k: bool(e.get(k)) for k in engine_keys}
+
+    you_eng = norm_engines((comp.get("you") or {}).get("engines"))
+    entities = [{"name": brand, "domain": "", "is_you": True, "engines": you_eng, "why": ""}]
     for c in competitors:
-        for site in _COMPET_PLATFORMS:
-            all_q.append(f"{c['name']} site:{site}")
-    flat = await tf.tf_search_many(all_q, max_results=2)
-    # slice back per competitor, collect URLs for one concurrent HTTP verification
-    per_comp_raw = {}
-    idx = 0
-    candidate_urls = set()
-    for c in competitors:
-        present = {}
-        for site in _COMPET_PLATFORMS:
-            res = flat[idx]; idx += 1
-            hit = [r for r in res if tf.root_domain(tf.host_of(r.get("url", ""))) == site and _mentions(c["name"], r.get("url", ""), r.get("title", ""))]
-            u = hit[0].get("url") if hit else None
-            if u:
-                candidate_urls.add(u)
-            present[site] = u
-        per_comp_raw[c["name"]] = present
+        entities.append({"name": c["name"], "domain": c.get("domain", ""), "is_you": False,
+                         "why": c.get("why", ""), "engines": norm_engines(c.get("engines"))})
+    for e in entities:
+        e["mention_count"] = sum(1 for v in e["engines"].values() if v)
+    total = sum(e["mention_count"] for e in entities) or 1
+    engine_presence = [{
+        "name": e["name"], "domain": e.get("domain", ""), "is_you": e["is_you"],
+        "mention_count": e["mention_count"],
+        "engines": e["engines"],
+        "engines_present": [label_of[k] for k in engine_keys if e["engines"][k]],
+        "share_pct": round(e["mention_count"] / total * 100),
+    } for e in entities]
+    engine_presence.sort(key=lambda x: (-x["mention_count"], not x["is_you"]))
 
-    from server import verify_live_urls  # local import to avoid cycles
-    liveness = await verify_live_urls(list(candidate_urls))
-    per_comp = {
-        name: {site: (u if liveness.get(u) else None) for site, u in sites.items()}
-        for name, sites in per_comp_raw.items()
-    }
-
-    # brand presence on the same platform set
-    brand_present = {}
-    for site in _COMPET_PLATFORMS:
-        match = next((p for p in brand_platforms if tf.root_domain(tf.host_of(p.get("url") or "")) == site and p.get("present")), None)
-        brand_present[site] = match.get("url") if match else None
-
-    # Share of Voice: presence count across the platform set
-    def score(pres):
-        return sum(1 for v in pres.values() if v)
-    entries = [{"name": brand, "domain": "", "presence": score(brand_present), "is_you": True}]
-    for c in competitors:
-        entries.append({"name": c["name"], "domain": c.get("domain", ""), "presence": score(per_comp[c["name"]]), "is_you": False})
-    total = sum(e["presence"] for e in entries) or 1
-    share_of_voice = [{"name": e["name"], "domain": e["domain"], "is_you": e["is_you"],
-                       "presence": e["presence"], "share_pct": round(e["presence"] / total * 100)}
-                      for e in entries]
-    share_of_voice.sort(key=lambda x: -x["share_pct"])
-
-    # Gap Analysis: platforms where >=1 competitor is present but the brand is NOT
-    site_names = {"crunchbase.com": "Crunchbase", "g2.com": "G2", "capterra.com": "Capterra",
-                  "producthunt.com": "Product Hunt", "trustpilot.com": "Trustpilot", "linkedin.com": "LinkedIn"}
+    # Gap Analysis: engines where >=1 competitor is mentioned but the brand is NOT
     gaps = []
-    for site in _COMPET_PLATFORMS:
-        if brand_present.get(site):
+    for k in engine_keys:
+        if you_eng.get(k):
             continue
-        comps_here = [{"name": c["name"], "url": per_comp[c["name"]][site]} for c in competitors if per_comp[c["name"]][site]]
+        comps_here = [{"name": c["name"], "domain": c.get("domain", "")}
+                      for c in competitors if norm_engines(c.get("engines")).get(k)]
         if comps_here:
-            gaps.append({"platform": site_names.get(site, site), "site": site,
-                         "you_present": False, "competitors_present": comps_here})
+            gaps.append({"engine": label_of[k], "engine_key": k, "you_present": False,
+                         "competitors_present": comps_here})
+
     return {
         "competitors": competitors,
-        "share_of_voice": share_of_voice,
+        "engines": engine_keys,
+        "engine_labels": [label_of[k] for k in engine_keys],
+        "engine_presence": engine_presence,
+        "share_of_voice": engine_presence,  # backward-compat alias
         "gap_analysis": gaps,
     }
 

@@ -10,7 +10,7 @@ import { PageHeader, EmptyState } from "@/components/ui-bits";
 import {
   Loader2, RefreshCcw, ArrowLeft, ExternalLink, CheckCircle2, XCircle,
   AlertTriangle, Link2, Activity, FileText, Globe, ChevronDown, ChevronRight,
-  Zap, ShieldCheck, Newspaper, Users, Gauge, Bot, MapPin, MessageSquare, Star,
+  Zap, ShieldCheck, Newspaper, Users, Gauge, Bot, MapPin, MessageSquare, Star, Wrench,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -84,7 +84,7 @@ export default function ProjectDetail() {
   const bpPlatforms = bp.platforms || [];
   const prList = project.pr_list || [];
   const ci = project.competitor_intel || {};
-  const sov = ci.share_of_voice || [];
+  const ep = ci.engine_presence || ci.share_of_voice || [];
   const gaps = ci.gap_analysis || [];
   const llmDist = project.llm_distribution || [];
   const countries = project.mention_countries || [];
@@ -279,11 +279,18 @@ export default function ProjectDetail() {
                       {p.issues && p.issues.length > 0 && (
                         <div className="mt-4">
                           <div className="text-[10px] uppercase tracking-widest font-bold text-muted-foreground mb-2">Issues ({p.issues.length})</div>
-                          <div className="flex flex-wrap gap-2">
+                          <div className="space-y-2">
                             {p.issues.map((iss, k) => (
-                              <div key={k} className={`text-xs px-2.5 py-1 rounded-md border ${severityColor[iss.severity]}`} data-testid={`issue-${iss.code}`}>
-                                <span className="font-bold mr-1">[{categoryLabel[iss.category] || iss.category}]</span>
-                                {iss.message}
+                              <div key={k} className={`text-xs px-3 py-2 rounded-md border ${severityColor[iss.severity]}`} data-testid={`issue-${iss.code}`}>
+                                <div className="font-medium">
+                                  <span className="font-bold mr-1">[{categoryLabel[iss.category] || iss.category}]</span>
+                                  {iss.message}
+                                </div>
+                                {iss.fix ? (
+                                  <div className="mt-1 flex items-start gap-1 text-[11px] text-foreground/80">
+                                    <Wrench size={11} className="mt-0.5 shrink-0" /> <span><b>Fix:</b> {iss.fix}</span>
+                                  </div>
+                                ) : null}
                               </div>
                             ))}
                           </div>
@@ -337,6 +344,21 @@ export default function ProjectDetail() {
                   <StatRow label="Canonical coverage" value={`${tech.canonical_coverage_pct ?? 0}%`} />
                 </Card>
               </div>
+              {Array.isArray(tech.tech_issues) && tech.tech_issues.length > 0 && (
+                <Card className="p-5 rounded-xl border-border/60 mb-5" data-testid="tech-issues">
+                  <h4 className="font-head font-bold text-sm mb-3 flex items-center gap-2"><AlertTriangle size={15} className="text-amber-500" /> Technical issues &amp; how to fix ({tech.tech_issues.length})</h4>
+                  <div className="space-y-2">
+                    {tech.tech_issues.map((it, i) => (
+                      <div key={i} className={`px-3 py-2 rounded-md border ${severityColor[it.severity] || severityColor.low}`} data-testid={`tech-issue-${i}`}>
+                        <div className="text-sm font-semibold">{it.title}</div>
+                        <div className="mt-1 flex items-start gap-1 text-[12px] text-foreground/80">
+                          <Wrench size={12} className="mt-0.5 shrink-0" /> <span><b>Fix:</b> {it.fix}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              )}
               {Array.isArray(tech.slowest_pages) && tech.slowest_pages.length > 0 && (
                 <Card className="p-5 rounded-xl border-border/60">
                   <div className="text-[10px] uppercase tracking-widest font-bold text-muted-foreground mb-2">Slowest pages</div>
@@ -409,39 +431,46 @@ export default function ProjectDetail() {
         </TabsContent>
 
         <TabsContent value="competitors" className="mt-4" data-testid="competitors-panel">
-          {sov.length === 0 ? (
+          {ep.length === 0 ? (
             <EmptyState icon={Users} text={processing ? "Analysing competitors…" : "No competitor data."} />
           ) : (
             <div className="grid lg:grid-cols-2 gap-5">
               <Card className="p-5 rounded-xl border-border/60">
-                <h4 className="font-head font-bold text-sm mb-1 flex items-center gap-2"><Users size={15} className="text-[#6366F1]" /> AI Share of Voice</h4>
-                <p className="text-xs text-muted-foreground mb-4">Presence across key AI-cited platforms (Crunchbase, G2, Capterra, Product Hunt, Trustpilot, LinkedIn).</p>
+                <h4 className="font-head font-bold text-sm mb-1 flex items-center gap-2"><Users size={15} className="text-[#6366F1]" /> AI Search Visibility</h4>
+                <p className="text-xs text-muted-foreground mb-4">How often each brand is mentioned or ranked across AI search engines (ChatGPT, Perplexity, Gemini, Claude, Grok, Copilot).</p>
                 <div className="space-y-3">
-                  {sov.map((s, i) => (
+                  {ep.map((s, i) => (
                     <div key={i}>
                       <div className="flex items-center justify-between text-sm mb-1">
                         <span className={`truncate ${s.is_you ? "font-bold text-[#6366F1]" : "font-medium"}`}>{s.name}{s.is_you ? " (you)" : ""}</span>
-                        <span className="tabular-nums text-xs text-muted-foreground">{s.share_pct}%</span>
+                        <span className="tabular-nums text-xs text-muted-foreground">{s.mention_count ?? 0}/6 · {s.share_pct}%</span>
                       </div>
                       <div className="h-2 rounded-full bg-muted overflow-hidden">
                         <div className="h-full rounded-full" style={{ width: `${s.share_pct}%`, background: s.is_you ? "#6366F1" : "#94a3b8" }} />
                       </div>
+                      {Array.isArray(s.engines_present) && s.engines_present.length > 0 && (
+                        <div className="flex flex-wrap gap-1 mt-1.5">
+                          {s.engines_present.map((eng, k) => (
+                            <span key={k} className="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700">{eng}</span>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
               </Card>
               <Card className="p-5 rounded-xl border-border/60">
                 <h4 className="font-head font-bold text-sm mb-1 flex items-center gap-2"><AlertTriangle size={15} className="text-amber-500" /> Gap Analysis</h4>
-                <p className="text-xs text-muted-foreground mb-4">Platforms where competitors are listed but <b className="text-foreground">you are not</b> — clear places to get listed.</p>
+                <p className="text-xs text-muted-foreground mb-4">AI engines where competitors are getting mentioned but <b className="text-foreground">you are not</b> — where to focus to earn AI visibility.</p>
                 {gaps.length === 0 ? (
-                  <div className="text-sm text-emerald-600 flex items-center gap-2"><CheckCircle2 size={15} /> No gaps — you appear wherever competitors do.</div>
+                  <div className="text-sm text-emerald-600 flex items-center gap-2"><CheckCircle2 size={15} /> No gaps — you appear on every engine your competitors do.</div>
                 ) : (
                   <div className="space-y-3">
                     {gaps.map((g, i) => (
                       <div key={i} className="p-3 rounded-lg border border-amber-200 bg-amber-50/60">
-                        <div className="font-semibold text-sm">{g.platform}</div>
-                        <div className="text-xs text-muted-foreground mt-1">Listed here: {g.competitors_present.map((c, k) => (
-                          <a key={k} href={c.url} target="_blank" rel="noreferrer" className="text-[#6366F1] hover:underline">{c.name}{k < g.competitors_present.length - 1 ? ", " : ""}</a>
+                        <div className="font-semibold text-sm flex items-center gap-1.5"><Bot size={13} className="text-amber-600" /> {g.engine}</div>
+                        <div className="text-xs text-muted-foreground mt-1">Mentioned here: {g.competitors_present.map((c, k) => (
+                          <span key={k} className="text-foreground font-medium">{c.name}{k < g.competitors_present.length - 1 ? ", " : ""}</span>
                         ))}</div>
                       </div>
                     ))}
@@ -450,7 +479,7 @@ export default function ProjectDetail() {
               </Card>
               {Array.isArray(ci.competitors) && ci.competitors.length > 0 && (
                 <Card className="p-5 rounded-xl border-border/60 lg:col-span-2">
-                  <div className="text-[10px] uppercase tracking-widest font-bold text-muted-foreground mb-2">Direct competitors</div>
+                  <div className="text-[10px] uppercase tracking-widest font-bold text-muted-foreground mb-2">Direct competitors ({ci.competitors.length})</div>
                   <div className="grid sm:grid-cols-2 gap-3">
                     {ci.competitors.map((c, i) => (
                       <div key={i} className="flex items-start gap-2 text-sm">
@@ -469,34 +498,42 @@ export default function ProjectDetail() {
           {citations.length === 0 ? (
             <EmptyState icon={Link2} text={processing ? "Discovering citation sources…" : "No citations detected yet."} />
           ) : (
-            <Card className="rounded-xl border-border/60 overflow-hidden" data-testid="citations-table">
-              <div className="hidden md:grid grid-cols-12 items-center gap-3 px-4 py-3 text-[10px] uppercase tracking-widest font-bold text-muted-foreground bg-muted/40 border-b">
-                <div className="col-span-3">Source</div>
-                <div className="col-span-6">Snippet / reason</div>
-                <div className="col-span-1 text-center">Type</div>
-                <div className="col-span-1 text-center">Live</div>
-                <div className="col-span-1 text-right">Verified</div>
-              </div>
-              {citations.map((c, i) => (
-                <div key={c.id || i} className="grid grid-cols-1 md:grid-cols-12 gap-3 items-center px-4 py-3 border-b last:border-0 hover:bg-muted/30" data-testid={`citation-row-${i}`}>
-                  <div className="col-span-3 min-w-0">
-                    <a href={c.url} target="_blank" rel="noopener noreferrer" className="text-sm font-medium hover:underline inline-flex items-center gap-1 truncate">
-                      {c.source_domain} <ExternalLink size={11} />
-                    </a>
-                  </div>
-                  <div className="col-span-6 text-xs text-muted-foreground">
-                    {c.snippet ? <span className="italic">&quot;{c.snippet}&quot;</span> : c.why}
-                  </div>
-                  <div className="col-span-1 text-center">
-                    <Badge className="bg-muted text-foreground border">{c.type}</Badge>
-                  </div>
-                  <div className="col-span-1 text-center text-xs tabular-nums">{c.http_status || "—"}</div>
-                  <div className="col-span-1 text-right">
-                    {c.verified ? <CheckCircle2 size={16} className="text-emerald-600 inline" /> : <XCircle size={16} className="text-muted-foreground inline" />}
-                  </div>
+            <>
+              <p className="text-sm text-muted-foreground mb-3">{citations.length} sources where <b className="text-foreground">{brand}</b> is mentioned — the article/page and which AI engines pick up the reference.</p>
+              <Card className="rounded-xl border-border/60 overflow-hidden" data-testid="citations-table">
+                <div className="hidden md:grid grid-cols-12 items-center gap-3 px-4 py-3 text-[10px] uppercase tracking-widest font-bold text-muted-foreground bg-muted/40 border-b">
+                  <div className="col-span-5">Source page</div>
+                  <div className="col-span-4">Picked up by</div>
+                  <div className="col-span-1 text-center">Type</div>
+                  <div className="col-span-1 text-center">Live</div>
+                  <div className="col-span-1 text-right">Verified</div>
                 </div>
-              ))}
-            </Card>
+                {citations.map((c, i) => (
+                  <div key={c.id || i} className="grid grid-cols-1 md:grid-cols-12 gap-3 items-start px-4 py-3 border-b last:border-0 hover:bg-muted/30" data-testid={`citation-row-${i}`}>
+                    <div className="col-span-5 min-w-0">
+                      <a href={c.url} target="_blank" rel="noopener noreferrer" className="text-sm font-medium hover:underline inline-flex items-center gap-1">
+                        <img src={favicon(c.url, c.source_domain)} alt="" className="w-4 h-4 rounded shrink-0" onError={(e) => { e.target.style.display = "none"; }} />
+                        <span className="truncate">{c.title || c.source_domain}</span> <ExternalLink size={11} className="shrink-0" />
+                      </a>
+                      <div className="text-[11px] text-muted-foreground truncate">{c.source_domain}</div>
+                      {c.snippet ? <div className="text-[11px] text-muted-foreground italic mt-1 line-clamp-2">&quot;{c.snippet}&quot;</div> : (c.why ? <div className="text-[11px] text-muted-foreground mt-1 line-clamp-2">{c.why}</div> : null)}
+                    </div>
+                    <div className="col-span-4 flex flex-wrap gap-1 content-start">
+                      {(c.engines || []).map((eng, k) => (
+                        <span key={k} className="text-[10px] px-1.5 py-0.5 rounded bg-[#6366F1]/10 text-[#6366F1] capitalize">{String(eng).replace("_", " ")}</span>
+                      ))}
+                    </div>
+                    <div className="col-span-1 text-center">
+                      <Badge className="bg-muted text-foreground border">{c.type}</Badge>
+                    </div>
+                    <div className="col-span-1 text-center text-xs tabular-nums">{c.http_status || "—"}</div>
+                    <div className="col-span-1 text-right">
+                      {c.verified ? <CheckCircle2 size={16} className="text-emerald-600 inline" /> : <XCircle size={16} className="text-muted-foreground inline" />}
+                    </div>
+                  </div>
+                ))}
+              </Card>
+            </>
           )}
         </TabsContent>
 
