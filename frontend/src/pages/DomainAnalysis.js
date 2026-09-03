@@ -23,6 +23,17 @@ import { exportDomainReport } from "@/lib/pdf";
 const priColor = { high: "bg-red-100 text-red-700 border-red-200", medium: "bg-amber-100 text-amber-700 border-amber-200", low: "bg-gray-100 text-gray-600 border-gray-200" };
 const posColor = { top: "bg-green-100 text-green-700 border-green-200", recommended: "bg-green-100 text-green-700 border-green-200", passing: "bg-amber-100 text-amber-700 border-amber-200" };
 const engLabel = { chatgpt: "ChatGPT", perplexity: "Perplexity", google_ai: "Google AI", gemini: "Gemini", claude: "Claude", copilot: "Copilot", grok: "Grok" };
+const ENGINE_ORDER = ["chatgpt", "perplexity", "gemini", "claude", "copilot", "grok", "google_ai"];
+const engineMeta = {
+  chatgpt: { label: "ChatGPT", domain: "openai.com" },
+  perplexity: { label: "Perplexity", domain: "perplexity.ai" },
+  gemini: { label: "Gemini", domain: "gemini.google.com" },
+  claude: { label: "Claude", domain: "claude.ai" },
+  copilot: { label: "Copilot", domain: "copilot.microsoft.com" },
+  grok: { label: "Grok", domain: "x.ai" },
+  google_ai: { label: "Google AI Overviews", domain: "google.com" },
+};
+const engFav = (d) => `https://www.google.com/s2/favicons?domain=${d}&sz=64`;
 
 function Bar({ score, label, note }) {
   return (
@@ -233,19 +244,31 @@ export default function DomainAnalysis() {
           {/* AI citation sources */}
           <Card className="lg:col-span-7 p-6 rounded-xl border-border/60">
             <h3 className="font-head font-bold mb-1 flex items-center gap-2"><Link2 size={18} className="text-[#6366F1]" /> Verified AI citation sources</h3>
-            <p className="text-xs text-muted-foreground mb-4 inline-flex items-center gap-1"><ShieldCheck size={13} className="text-green-600" /> Live, HTTP-verified URLs AI engines pull this brand from ({(r.citation_sources || []).length} verified).</p>
+            <p className="text-xs text-muted-foreground mb-4 inline-flex items-center gap-1"><ShieldCheck size={13} className="text-green-600" /> Live, HTTP-verified pages where this brand appears &amp; which AI engines pick them up ({(r.citation_sources || []).length} sources).</p>
             <div className="space-y-2" data-testid="citation-sources">
-              {(showAllCites ? (r.citation_sources || []) : (r.citation_sources || []).slice(0, 5)).map((c, i) => (
+              {(showAllCites ? (r.citation_sources || []) : (r.citation_sources || []).slice(0, 8)).map((c, i) => (
                 <div key={i} className="flex items-start gap-3 p-3 rounded-lg border border-border/60">
                   <span className="font-head font-bold text-muted-foreground w-5 text-center shrink-0">{i + 1}</span>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-medium text-sm truncate">{c.source}</span>
+                      <span className="font-medium text-sm truncate">{c.title || c.source}</span>
                       {c.type && <Badge variant="secondary" className="rounded-md capitalize text-[10px]">{c.type}</Badge>}
                       <Badge className="rounded-md text-[10px] bg-green-100 text-green-700 border-green-200 border inline-flex items-center gap-0.5"><ShieldCheck size={10} /> Live</Badge>
                     </div>
-                    {c.why && <p className="text-xs text-muted-foreground mt-0.5">{c.why}</p>}
+                    <div className="text-[11px] text-muted-foreground mt-0.5">{c.source}{c.domain ? ` · ${c.domain}` : ""}</div>
+                    {c.why && <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{c.why}</p>}
                     {c.url && <a href={c.url.startsWith("http") ? c.url : `https://${c.url}`} target="_blank" rel="noreferrer" className="text-xs text-[#6366F1] inline-flex items-center gap-1 mt-1 hover:underline break-all">{c.url} <ExternalLink size={11} /></a>}
+                    {Array.isArray(c.engines) && c.engines.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1 mt-1.5">
+                        <span className="text-[10px] text-muted-foreground mr-0.5">Picked up by:</span>
+                        {c.engines.map((e) => (
+                          <span key={e} className="text-[10px] px-1.5 py-0.5 rounded bg-[#6366F1]/10 text-[#6366F1] inline-flex items-center gap-1">
+                            <img src={engFav((engineMeta[e] || {}).domain || "")} alt="" className="w-3 h-3 rounded-sm" onError={(ev) => { ev.target.style.display = "none"; }} />
+                            {engLabel[e] || e}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   {c.authority != null && <span className="font-head font-bold text-sm shrink-0" style={{ color: scoreColor(c.authority) }}>{c.authority}</span>}
                 </div>
@@ -254,10 +277,10 @@ export default function DomainAnalysis() {
                 <p className="text-sm text-muted-foreground">No live citation sources verified — none of the candidate URLs resolved, meaning this brand has little third-party coverage AI can draw on.</p>
               )}
             </div>
-            {(r.citation_sources || []).length > 5 && (
+            {(r.citation_sources || []).length > 8 && (
               <button onClick={() => setShowAllCites((v) => !v)} data-testid="toggle-citations"
                 className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-[#6366F1] hover:underline">
-                {showAllCites ? <>Show less <ChevronUp size={15} /></> : <>View {(r.citation_sources.length - 5)} more <ChevronDown size={15} /></>}
+                {showAllCites ? <>Show less <ChevronUp size={15} /></> : <>View {(r.citation_sources.length - 8)} more <ChevronDown size={15} /></>}
               </button>
             )}
           </Card>
@@ -265,9 +288,9 @@ export default function DomainAnalysis() {
           {/* Ranking prompts */}
           <Card className="lg:col-span-5 p-6 rounded-xl border-border/60">
             <h3 className="font-head font-bold mb-1 flex items-center gap-2"><Search size={18} className="text-[#6366F1]" /> Ranking prompts</h3>
-            <p className="text-xs text-muted-foreground mb-4">Queries this domain surfaces for in AI answers ({(r.ranking_prompts || []).length} prompts).</p>
+            <p className="text-xs text-muted-foreground mb-4">All queries this domain surfaces for in AI answers ({(r.ranking_prompts || []).length} prompts).</p>
             <div className="space-y-2" data-testid="ranking-prompts">
-              {(showAllPrompts ? (r.ranking_prompts || []) : (r.ranking_prompts || []).slice(0, 5)).map((p, i) => (
+              {(showAllPrompts ? (r.ranking_prompts || []) : (r.ranking_prompts || []).slice(0, 8)).map((p, i) => (
                 <div key={i} className="p-3 rounded-lg bg-muted/40">
                   <div className="flex items-start justify-between gap-2">
                     <span className="text-sm font-medium">{p.prompt}</span>
@@ -284,11 +307,52 @@ export default function DomainAnalysis() {
                 <p className="text-sm text-muted-foreground">No ranking prompts identified for this domain.</p>
               )}
             </div>
-            {(r.ranking_prompts || []).length > 5 && (
+            {(r.ranking_prompts || []).length > 8 && (
               <button onClick={() => setShowAllPrompts((v) => !v)} data-testid="toggle-prompts"
                 className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-[#6366F1] hover:underline">
-                {showAllPrompts ? <>Show less <ChevronUp size={15} /></> : <>View {(r.ranking_prompts.length - 5)} more <ChevronDown size={15} /></>}
+                {showAllPrompts ? <>Show less <ChevronUp size={15} /></> : <>View {(r.ranking_prompts.length - 8)} more <ChevronDown size={15} /></>}
               </button>
+            )}
+          </Card>
+
+          {/* Distribution by LLM */}
+          <Card className="lg:col-span-6 p-6 rounded-xl border-border/60" data-testid="llm-distribution">
+            <h3 className="font-head font-bold mb-1 flex items-center gap-2"><Sparkles size={18} className="text-[#6366F1]" /> Distribution by LLM</h3>
+            <p className="text-xs text-muted-foreground mb-4">How this brand&apos;s mentions spread across AI answer engines (from prompt-ranking simulations).</p>
+            <div className="space-y-3">
+              {ENGINE_ORDER.map((k) => {
+                const d = (r.llm_distribution || []).find((x) => x.key === k) || { mentions: 0, share_pct: 0 };
+                const m = engineMeta[k];
+                return (
+                  <div key={k} data-testid={`llm-row-${k}`}>
+                    <div className="flex items-center justify-between text-sm mb-1">
+                      <span className="flex items-center gap-2 font-medium">
+                        <img src={engFav(m.domain)} alt="" className="w-4 h-4 rounded" onError={(e) => { e.target.style.display = "none"; }} /> {m.label}
+                      </span>
+                      <span className="tabular-nums text-xs text-muted-foreground">{d.mentions} · {d.share_pct}%</span>
+                    </div>
+                    <div className="h-2 rounded-full bg-muted overflow-hidden"><div className="h-full rounded-full" style={{ width: `${d.share_pct}%`, background: "#6366F1" }} /></div>
+                  </div>
+                );
+              })}
+            </div>
+          </Card>
+
+          {/* By Country */}
+          <Card className="lg:col-span-6 p-6 rounded-xl border-border/60" data-testid="by-country">
+            <h3 className="font-head font-bold mb-1 flex items-center gap-2"><Globe size={18} className="text-[#10b981]" /> By Country</h3>
+            <p className="text-xs text-muted-foreground mb-4">Countries where this brand is most discussed &amp; surfaced in AI search.</p>
+            {(r.mention_countries || []).length === 0 ? (
+              <p className="text-sm text-muted-foreground">No country data available.</p>
+            ) : (
+              <div className="space-y-3">
+                {(r.mention_countries || []).map((c, i) => (
+                  <div key={i} data-testid={`country-row-${i}`}>
+                    <div className="flex items-center justify-between text-sm mb-1"><span className="font-medium">{c.country}</span><span className="tabular-nums text-xs text-muted-foreground">{c.share_pct}%</span></div>
+                    <div className="h-2 rounded-full bg-muted overflow-hidden"><div className="h-full rounded-full" style={{ width: `${c.share_pct}%`, background: "#10b981" }} /></div>
+                  </div>
+                ))}
+              </div>
             )}
           </Card>
 
@@ -352,6 +416,32 @@ export default function DomainAnalysis() {
               })}
               {(!r.competitors || r.competitors.length === 0) && <p className="text-sm text-muted-foreground">No competitors detected.</p>}
             </div>
+          </Card>
+
+          {/* AI Share of Voice */}
+          <Card className="lg:col-span-12 p-6 rounded-xl border-border/60" data-testid="ai-share-of-voice">
+            <h3 className="font-head font-bold mb-1 flex items-center gap-2"><Users size={16} className="text-[#6366F1]" /> AI Share of Voice</h3>
+            <p className="text-xs text-muted-foreground mb-4">Which brands are mentioned or ranked across the major AI search engines (ChatGPT, Perplexity, Gemini, Claude, Copilot, Grok, Google AI).</p>
+            {(r.ai_share_of_voice || []).length === 0 ? (
+              <p className="text-sm text-muted-foreground">No AI share-of-voice data available.</p>
+            ) : (
+              <div className="space-y-3">
+                {(r.ai_share_of_voice || []).map((s, i) => (
+                  <div key={i} data-testid={`sov-row-${i}`}>
+                    <div className="flex items-center justify-between text-sm mb-1">
+                      <span className={`truncate ${s.is_you ? "font-bold text-[#6366F1]" : "font-medium"}`}>{s.name}{s.is_you ? " (you)" : ""}</span>
+                      <span className="tabular-nums text-xs text-muted-foreground">{s.mention_count}/7 · {s.share_pct}%</span>
+                    </div>
+                    <div className="h-2 rounded-full bg-muted overflow-hidden"><div className="h-full rounded-full" style={{ width: `${s.share_pct}%`, background: s.is_you ? "#6366F1" : "#94a3b8" }} /></div>
+                    {Array.isArray(s.engines_present) && s.engines_present.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1.5">
+                        {s.engines_present.map((e, k) => <span key={k} className="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700">{e}</span>)}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
           </Card>
         </div>
       )}

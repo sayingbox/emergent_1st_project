@@ -791,6 +791,29 @@ def _mentions_brand(brand_term: str, *texts) -> bool:
     return len(longest) >= 3 and longest in blob
 
 
+DOMAIN_ENGINE_KEYS = ["chatgpt", "perplexity", "gemini", "claude", "grok", "copilot", "google_ai"]
+DOMAIN_ENGINE_LABELS = {"chatgpt": "ChatGPT", "perplexity": "Perplexity", "gemini": "Gemini",
+                        "claude": "Claude", "grok": "Grok", "copilot": "Copilot",
+                        "google_ai": "Google AI Overviews"}
+
+
+def _engines_for_source(host: str, ctype: str, authority: int) -> list:
+    """Heuristically map a citation source to the AI engines most likely to surface it."""
+    host = (host or "").lower()
+    ctype = (ctype or "").lower()
+    if "wikipedia.org" in host or (authority or 0) >= 88:
+        return ["chatgpt", "perplexity", "gemini", "claude", "copilot", "google_ai"]
+    if ctype == "news" or any(h in host for h in ("techcrunch", "forbes", "reuters", "bloomberg", "theverge", "wired", "businessinsider")):
+        return ["perplexity", "gemini", "google_ai", "copilot"]
+    if ctype == "review" or any(h in host for h in ("g2.com", "capterra", "trustpilot", "getapp", "gartner")):
+        return ["chatgpt", "perplexity", "gemini"]
+    if ctype in ("forum", "social", "video") or any(h in host for h in ("reddit", "quora", "youtube", "x.com", "twitter")):
+        return ["perplexity", "google_ai", "grok"]
+    if ctype in ("directory", "documentation") or any(h in host for h in ("crunchbase", "linkedin", "producthunt", "github")):
+        return ["chatgpt", "perplexity", "claude"]
+    return ["chatgpt", "perplexity"]
+
+
 async def real_citation_sources(brand: str, domain: Optional[str]) -> list:
     """Find REAL third-party citation sources for a brand via web search
     (TinyFish when configured, DuckDuckGo fallback otherwise), then HTTP-verify
@@ -803,6 +826,9 @@ async def real_citation_sources(brand: str, domain: Optional[str]) -> list:
         f"{brand} site:capterra.com", f"{brand} site:trustpilot.com",
         f"{brand} site:producthunt.com", f"{brand} site:youtube.com",
         f"{brand} site:reddit.com", f"{brand} site:github.com",
+        f"{brand} site:medium.com", f"{brand} site:forbes.com",
+        f"{brand} site:techcrunch.com", f"{brand} site:quora.com",
+        f"{brand} site:gartner.com",
     ]
     general = [brand, f"{brand} review", f'"{brand}"']
     web_batches = await tf.tf_search_many(site_queries + general, max_results=3)
@@ -844,7 +870,7 @@ async def real_citation_sources(brand: str, domain: Optional[str]) -> list:
     for c in cites:
         c["verified"] = True
     cites.sort(key=lambda c: -c.get("authority", 0))
-    return cites[:50]
+    return cites[:60]
 
 
 DOMAIN_SYSTEM = """You are a world-class GEO/AEO (Generative & Answer Engine Optimization) analyst running a strict CRAWL-FIRST analysis.
@@ -921,7 +947,10 @@ Return valid minified JSON with EXACTLY this schema:
    {{"priority":"high|medium|low","action":"specific, concrete action to improve AI visibility for the discovered topics"}}
  ],
  "competitors": [
-   {{"domain":"competitor root domain, e.g. 'besedo.com'","topic":"the shared discovered topic they compete on in AI search","note":"why they compete for the same AI answers"}}
+   {{"domain":"competitor root domain, e.g. 'besedo.com'","topic":"the shared discovered topic they compete on in AI search","note":"why they compete for the same AI answers","engines":["subset of: chatgpt, perplexity, gemini, claude, grok, copilot, google_ai — the AI engines that MENTION/RECOMMEND this competitor for the shared topics"]}}
+ ],
+ "mention_countries": [
+   {{"country":"country name where this brand is most discussed/surfaced in AI search","share_pct":<integer, all entries roughly sum to 100>}}
  ]
 }}
 
@@ -929,9 +958,10 @@ STRICT REQUIREMENTS — non-negotiable:
 - discovered_services: 4-10 items, ONLY services evidenced by the crawled content.
 - top_topics: 5-10, derived DIRECTLY from discovered_services, sorted by relevance desc.
 - ai_search_rankings: EXACTLY one entry per top_topic (same order).
-- ranking_prompts: 15-30, each `topic` MUST be one of top_topics[].topic; short natural queries spread across topics with mixed intents; sort top → recommended → passing.
+- ranking_prompts: 20-40 — include ALL natural queries this brand plausibly ranks for (no artificial cap); each `topic` MUST be one of top_topics[].topic; short natural queries spread across topics with mixed intents; sort top → recommended → passing.
 - citation_sources: 20-40 entries, each with a REAL live URL (no fabricated slugs); ranked by authority desc.
-- competitors: 5-10 real companies competing for the SAME topics in AI search.
+- competitors: 5-10 real companies competing for the SAME topics in AI search; include per-competitor `engines`.
+- mention_countries: 4-6 countries sorted by share_pct desc.
 - categories: exactly the 5 listed.
 - quick_wins: 5-8 items.
 - All numeric scores are integers 0-100.
@@ -944,7 +974,7 @@ async def _run_domain_analysis(job_id: str, user_id: str, domain: str):
         crawl = await crawl_business(domain)
 
         # 2-6) LLM analysis grounded in the crawl
-        res = await llm_json(DOMAIN_SYSTEM, domain_prompt(domain, crawl), f"domain-{job_id}", max_tokens=12000)
+        res = await llm_json(DOMAIN_SYSTEM, domain_prompt(domain, crawl), f"domain-{job_id}", max_tokens=16000)
 
         # Normalise + defensively filter
         top_topics_raw = res.get("top_topics", []) or []
@@ -1041,9 +1071,55 @@ async def _run_domain_analysis(job_id: str, user_id: str, domain: str):
                     "domain": str(c.get("domain")).strip(),
                     "topic": _tie_topic(str(c.get("topic", "")).strip()) if c.get("topic") else "",
                     "note": str(c.get("note", "")).strip(),
+                    "engines": [str(e).lower() for e in (c.get("engines") or []) if isinstance(e, str) and str(e).lower() in DOMAIN_ENGINE_KEYS],
                 })
             elif isinstance(c, str) and c.strip():
-                competitors.append({"domain": c.strip(), "topic": "", "note": ""})
+                competitors.append({"domain": c.strip(), "topic": "", "note": "", "engines": []})
+
+        # Tag each citation with the AI engines most likely to surface it
+        for c in citation_sources:
+            _host = c.get("domain") or tf.root_domain(tf.host_of(c.get("url", "")))
+            c["engines"] = _engines_for_source(_host, c.get("type"), c.get("authority") or 0)
+
+        # Distribution by LLM — derived from ranking-prompt engine flags (no extra LLM call)
+        eng_counts = {}
+        for rp in ranking_prompts:
+            for e in (rp.get("engines") or []):
+                e = str(e).lower()
+                if e in DOMAIN_ENGINE_KEYS:
+                    eng_counts[e] = eng_counts.get(e, 0) + 1
+        _tot = sum(eng_counts.values()) or 1
+        llm_distribution = [{
+            "engine": DOMAIN_ENGINE_LABELS[k], "key": k, "mentions": eng_counts.get(k, 0),
+            "share_pct": round(eng_counts.get(k, 0) / _tot * 100),
+        } for k in DOMAIN_ENGINE_KEYS if eng_counts.get(k, 0) > 0]
+        llm_distribution.sort(key=lambda x: -x["mentions"])
+
+        # AI Share of Voice — brand (derived) + competitors, by AI-engine mentions
+        brand_engines = [k for k in DOMAIN_ENGINE_KEYS if eng_counts.get(k, 0) > 0]
+        sov_entities = [{"name": res.get("brand") or domain, "domain": domain, "is_you": True, "engines": brand_engines}]
+        for c in competitors:
+            sov_entities.append({"name": c.get("domain") or "", "domain": c.get("domain") or "",
+                                 "is_you": False, "engines": c.get("engines") or []})
+        _tote = sum(len(x["engines"]) for x in sov_entities) or 1
+        ai_share_of_voice = [{
+            "name": x["name"], "domain": x.get("domain", ""), "is_you": x["is_you"],
+            "mention_count": len(x["engines"]),
+            "engines_present": [DOMAIN_ENGINE_LABELS[k] for k in DOMAIN_ENGINE_KEYS if k in x["engines"]],
+            "share_pct": round(len(x["engines"]) / _tote * 100),
+        } for x in sov_entities]
+        ai_share_of_voice.sort(key=lambda x: (-x["mention_count"], not x["is_you"]))
+
+        # By Country
+        mention_countries = []
+        for c in (res.get("mention_countries", []) or []):
+            if isinstance(c, dict) and c.get("country"):
+                try:
+                    pct = int(round(float(c.get("share_pct") or 0)))
+                except Exception:
+                    pct = 0
+                mention_countries.append({"country": str(c["country"]).strip(), "share_pct": max(0, min(100, pct))})
+        mention_countries = sorted(mention_countries, key=lambda x: -x["share_pct"])[:6]
 
         metrics = res.get("metrics", {}) or {}
         result = {
@@ -1069,6 +1145,9 @@ async def _run_domain_analysis(job_id: str, user_id: str, domain: str):
             "ai_search_rankings": ai_search_rankings,
             "citation_sources": citation_sources,
             "ranking_prompts": ranking_prompts,
+            "llm_distribution": llm_distribution,
+            "ai_share_of_voice": ai_share_of_voice,
+            "mention_countries": mention_countries,
             "quick_wins": [q for q in (res.get("quick_wins", []) or []) if isinstance(q, dict)],
             "competitors": competitors,
         }
