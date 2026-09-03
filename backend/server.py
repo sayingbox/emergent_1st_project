@@ -870,6 +870,8 @@ async def real_citation_sources(brand: str, domain: Optional[str]) -> list:
     for c in cites:
         c["verified"] = True
     cites.sort(key=lambda c: -c.get("authority", 0))
+    for c in cites:
+        c["engines"] = _engines_for_source(c.get("domain"), c.get("type"), c.get("authority") or 0)
     return cites[:60]
 
 
@@ -1240,8 +1242,8 @@ async def citations(body: CitationInput, user: dict = Depends(get_current_user))
 
     # 1) REAL search first (TinyFish if available, otherwise DuckDuckGo fallback).
     #    Every URL is a real search-engine result, then HTTP-verified live.
-    web = await tf.tf_search(query, max_results=12)
-    news = await tf.tf_search(query, domain_type="news", max_results=6)
+    web = await tf.tf_search(query, max_results=25)
+    news = await tf.tf_search(query, domain_type="news", max_results=10)
     seen_hosts, sources = set(), []
     for r, dt in [(x, "web") for x in web] + [(x, "news") for x in news]:
         url = r.get("url", "")
@@ -1267,7 +1269,9 @@ async def citations(body: CitationInput, user: dict = Depends(get_current_user))
     for s in sources:
         s["verified"] = True
     sources.sort(key=lambda s: -s.get("authority", 0))
-    sources = sources[:12]
+    sources = sources[:40]
+    for s in sources:
+        s["engines"] = _engines_for_source(s.get("domain"), s.get("type"), s.get("authority") or 0)
 
     # Compute user_domain citation status from verified sources
     user_domain_cited = None
@@ -1295,7 +1299,7 @@ Return JSON:
  "sources": [{{"domain":"example.com","url":"https://example.com","title":"likely page/source","type":"official|editorial|community|reference|competitor","authority":<0-100>,"likelihood":<0-100>,"why":"why AI would cite it"}}],
  "recommendation": "how the user could earn a citation for this query"
 }}
-Provide 8-12 sources ranked by likelihood desc with real live URLs only."""
+Provide 12-20 sources ranked by likelihood desc with real live URLs only."""
         try:
             res = await llm_json(system, prompt, f"cite-{user['id']}")
         except Exception as e:
@@ -1314,6 +1318,7 @@ Provide 8-12 sources ranked by likelihood desc with real live URLs only."""
         sources = [s for s in raw if liveness.get(s["url"])]
         for s in sources:
             s["verified"] = True
+            s["engines"] = _engines_for_source(s.get("domain"), s.get("type"), s.get("authority") or 0)
         recommendation = res.get("recommendation") or recommendation
         if dom:
             dom_root = tf.root_domain(dom)

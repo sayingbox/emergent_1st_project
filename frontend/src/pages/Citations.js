@@ -35,13 +35,20 @@ const typeColor = {
 };
 const JOB_KEY = "citations";
 
+const engLabel = { chatgpt: "ChatGPT", perplexity: "Perplexity", google_ai: "Google AI Overviews", gemini: "Gemini", claude: "Claude", copilot: "Copilot", grok: "Grok" };
+const engineMeta = {
+  chatgpt: "openai.com", perplexity: "perplexity.ai", gemini: "gemini.google.com",
+  claude: "claude.ai", copilot: "copilot.microsoft.com", grok: "x.ai", google_ai: "google.com",
+};
+const engFav = (d) => `https://www.google.com/s2/favicons?domain=${d}&sz=64`;
+
 function SourceRow({ s, i }) {
   return (
-    <Card className="p-4 rounded-xl border-border/60 flex items-center gap-4">
-      <span className="font-head font-extrabold text-lg text-muted-foreground w-6 text-center">{i + 1}</span>
+    <Card className="p-4 rounded-xl border-border/60 flex items-start gap-4">
+      <span className="font-head font-extrabold text-lg text-muted-foreground w-6 text-center shrink-0">{i + 1}</span>
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="font-head font-bold truncate">{s.domain || s.source}</span>
+          <span className="font-head font-bold truncate">{s.title || s.domain || s.source}</span>
           {s.type && <Badge className={`rounded-md capitalize border-0 ${typeColor[s.type] || "bg-muted"}`}>{s.type}</Badge>}
           {s.verified && (
             <span className="inline-flex items-center gap-1 text-[10px] uppercase font-bold text-green-700 bg-green-50 border border-green-200 rounded-md px-1.5 py-0.5">
@@ -49,13 +56,24 @@ function SourceRow({ s, i }) {
             </span>
           )}
         </div>
-        <p className="text-xs text-muted-foreground truncate mt-0.5">
-          {s.title ? `${s.title}` : ""}{s.title && s.why ? " — " : ""}{s.why || ""}
+        <p className="text-xs text-muted-foreground mt-0.5">
+          <span className="font-medium text-foreground/70">{s.domain || s.source}</span>{s.why ? ` — ${s.why}` : ""}
         </p>
         {s.url && (
           <a href={s.url} target="_blank" rel="noreferrer" className="text-[11px] text-blue-600 hover:underline inline-flex items-center gap-1 mt-1">
             <ExternalLink size={11} /> <span className="truncate">{s.url}</span>
           </a>
+        )}
+        {Array.isArray(s.engines) && s.engines.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1 mt-2">
+            <span className="text-[10px] text-muted-foreground mr-0.5">AI engines using this source:</span>
+            {s.engines.map((e) => (
+              <span key={e} className="text-[10px] px-1.5 py-0.5 rounded bg-[#6366F1]/10 text-[#6366F1] inline-flex items-center gap-1">
+                <img src={engFav(engineMeta[e] || "")} alt="" className="w-3 h-3 rounded-sm" onError={(ev) => { ev.target.style.display = "none"; }} />
+                {engLabel[e] || e}
+              </span>
+            ))}
+          </div>
         )}
       </div>
       {typeof s.likelihood === "number" && (
