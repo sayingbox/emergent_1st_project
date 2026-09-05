@@ -639,6 +639,8 @@ class VisibilityInput(BaseModel):
     brand: str
     domain: Optional[str] = None
     prompts: List[str]
+    project_name: Optional[str] = None
+    seed_prompts: Optional[List[str]] = None
 
 
 class CitationInput(BaseModel):
@@ -1450,9 +1452,146 @@ Rules:
     return {"prompts": clean[:10]}
 
 
+@api_router.post("/visibility/expand-prompts")
+async def visibility_expand_prompts(body: dict, user: dict = Depends(get_current_user)):
+    """Expand a user-provided seed list of prompts (any count) into 25-30
+    diverse, category-relevant buyer prompts. ONE small LLM call — very low
+    credit cost. Keeps the user's seeds and adds fresh variations that AI
+    engines actually see from real buyers."""
+    brand = (body.get("brand") or "").strip()
+    domain = (body.get("domain") or "").strip()
+    seeds = [str(s).strip() for s in (body.get("seeds") or []) if str(s or "").strip()]
+    if not brand and not domain:
+        raise HTTPException(status_code=400, detail="Provide a brand or domain")
+    if not seeds:
+        raise HTTPException(status_code=400, detail="Provide at least one seed prompt")
+
+    seeds = seeds[:12]  # cap seeds to keep prompt small
+    target_total = 30
+    need = max(0, target_total - len(seeds))
+    system = (
+        "You expand a small set of seed AI-search prompts into a wider, natural set of "
+        "buyer-intent prompts that real users type into ChatGPT, Perplexity, Gemini, "
+        "Claude, Copilot and Grok. Every prompt must be: short (4-10 words), generic "
+        "(NO brand name), category-relevant (inferred from the brand/domain), and "
+        "distinct in wording from every other prompt. Respond with ONLY valid minified JSON."
+    )
+    prompt = f"""BRAND: {brand or domain}{(' (' + domain + ')') if brand and domain else ''}
+SEED PROMPTS (keep these EXACTLY, don't paraphrase them):
+{json.dumps(seeds)}
+
+Return JSON:
+{{"prompts": [<all seed prompts first, then {need} additional prompts>]}}
+
+Rules:
+- The first {len(seeds)} entries MUST be the seeds, verbatim, in order.
+- Then add {need} NEW prompts that a real buyer would ask AI engines in this category.
+- Cover a mix: "best X for Y", "top X tools 2025", "X vs Y", "how to X", "cheapest X",
+  "X alternatives", "X for [industry]", "features of X", "X pricing comparison".
+- 4-10 words each. No brand name. No duplicates (case-insensitive).
+- Ranked so the highest buyer-intent prompts come first after the seeds.
+"""
+    try:
+        res = await llm_json(system, prompt, f"vis-expand-{user['id']}-{secrets.token_hex(3)}", max_tokens=2048)
+    except Exception as e:
+        logger.warning(f"visibility expand prompts failed: {e}")
+        raise HTTPException(status_code=502, detail="Could not expand prompts — please try again.")
+    raw = res.get("prompts") or []
+    clean = []
+    seen = set()
+    for p in raw:
+        if not isinstance(p, str):
+            continue
+        p = p.strip().strip('"\'')
+        if not p or p.lower() in seen:
+            continue
+        # 3-15 word sanity limit
+        w = p.split()
+        if len(w) < 3 or len(w) > 15:
+            continue
+        seen.add(p.lower())
+        clean.append(p)
+    # Ensure seeds are always present + first
+    seed_lower = {s.lower() for s in seeds}
+    ordered = list(seeds) + [p for p in clean if p.lower() not in seed_lower]
+    return {"prompts": ordered[:target_total]}
+
+
+@api_router.post("/visibility/prompt-sources")
+async def visibility_prompt_sources(body: dict, user: dict = Depends(get_current_user)):
+    """Return the REAL citation sources for a single prompt (what each AI engine
+    would surface). Lazy per-click endpoint used by the Visibility Tracker
+    when the user expands a prompt row. Uses TinyFish live web search (0 LLM)
+    + Gemini `googleSearch` grounding for real per-engine attribution, cached
+    24h in Mongo so repeat expansions of the same prompt cost 0 LLM."""
+    prompt = (body.get("prompt") or "").strip()
+    brand = (body.get("brand") or "").strip()
+    domain = (body.get("domain") or "").strip() or None
+    if not prompt:
+        raise HTTPException(status_code=400, detail="prompt is required")
+
+    # Cache-key includes brand+prompt so identical prompts across projects share.
+    cache_key = f"psrc||{brand.lower()}||{prompt.lower()}"[:400]
+    cached = None
+    try:
+        cached_doc = await db.prompt_source_cache.find_one({"_id": cache_key})
+        if cached_doc and (time.time() - float(cached_doc.get("ts", 0))) < _ATTR_TTL_SECONDS:
+            cached = cached_doc.get("sources")
+    except Exception:
+        cached = None
+    if cached is not None:
+        return {"prompt": prompt, "sources": cached, "cached": True}
+
+    # 1) Real web search results for this exact prompt (0 LLM credit).
+    web = await tf.tf_search(prompt, max_results=20)
+    news = await tf.tf_search(prompt, domain_type="news", max_results=6)
+    seen_hosts, sources = set(), []
+    for r, dt in [(x, "web") for x in web] + [(x, "news") for x in news]:
+        url = r.get("url", "")
+        host = tf.root_domain(tf.host_of(url))
+        if not url or not host or host in seen_hosts:
+            continue
+        if host in ("google.com", "bing.com", "duckduckgo.com", "yahoo.com") or "/goto?" in url or "/url?" in url:
+            continue
+        seen_hosts.add(host)
+        sources.append({
+            "domain": host,
+            "url": url,
+            "title": r.get("title") or "",
+            "type": tf.type_for(url, dt),
+            "authority": tf.authority_for(url),
+            "why": r.get("snippet") or "",
+        })
+
+    # 2) HTTP-verify liveness — never show a dead source.
+    liveness = await verify_live_urls([s["url"] for s in sources])
+    sources = [s for s in sources if liveness.get(s["url"])]
+    for s in sources:
+        s["verified"] = True
+    sources.sort(key=lambda s: -s.get("authority", 0))
+    sources = sources[:20]
+
+    # 3) Real per-engine attribution (Gemini grounding on backend + client-side
+    #    Puter.js for ChatGPT/Claude/Perplexity/Grok).
+    engine_map = await real_engine_attribution(brand or prompt, prompt, [s["url"] for s in sources])
+    apply_engine_attribution(sources, engine_map)
+
+    # 4) Persist to cache for 24h
+    try:
+        await db.prompt_source_cache.update_one(
+            {"_id": cache_key},
+            {"$set": {"sources": sources, "ts": time.time(), "prompt": prompt, "brand": brand}},
+            upsert=True,
+        )
+    except Exception as e:
+        logger.warning(f"prompt_source_cache write failed: {e}")
+
+    return {"prompt": prompt, "sources": sources, "cached": False}
+
+
 @api_router.post("/visibility")
 async def visibility(body: VisibilityInput, user: dict = Depends(get_current_user)):
-    prompts = [p.strip() for p in body.prompts if p.strip()][:12]
+    prompts = [p.strip() for p in body.prompts if p.strip()][:40]
     if not body.brand.strip() or not prompts:
         raise HTTPException(status_code=400, detail="Brand and at least one prompt are required")
     system = """You simulate how leading generative AI engines respond to user prompts, and whether a given brand is mentioned or recommended in those answers. Base this on your knowledge of the brand's real-world prominence. Respond with ONLY valid minified JSON."""
@@ -1473,21 +1612,19 @@ Return JSON:
  "recommendations": ["how to increase AI visibility"]
 }}
 One result object per prompt, same order."""
-    res = await llm_json(system, prompt, f"vis-{user['id']}")
+    res = await llm_json(system, prompt, f"vis-{user['id']}", max_tokens=8000)
 
-    # Attach REAL citation sources from TinyFish live web search (0 LLM credit).
-    # Real per-engine attribution (Gemini via googleSearch grounding on backend +
-    # ChatGPT/Claude/Perplexity/Grok via Puter.js on the frontend) is applied inside
-    # real_citation_sources() and enriched further client-side.
-    try:
-        cite_sources = await real_citation_sources(body.brand, body.domain or None)
-    except Exception as e:
-        logger.warning(f"visibility citation_sources failed: {e}")
-        cite_sources = []
-
-    doc = {"id": secrets.token_hex(12), "user_id": user["id"], "brand": body.brand, "domain": body.domain,
-           "citation_sources": cite_sources,
-           "created_at": datetime.now(timezone.utc).isoformat(), **res}
+    doc = {
+        "id": secrets.token_hex(12),
+        "user_id": user["id"],
+        "project_name": (body.project_name or body.brand).strip(),
+        "brand": body.brand,
+        "domain": body.domain,
+        "seed_prompts": (body.seed_prompts or [])[:12],
+        "prompts": prompts,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        **res,
+    }
     await db.visibility.insert_one(doc)
     doc.pop("_id", None)
     return doc
