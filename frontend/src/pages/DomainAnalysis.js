@@ -19,6 +19,7 @@ import { ScoreGauge, scoreColor } from "@/components/ScoreGauge";
 import { Globe, Loader2, Sparkles, Zap, Users, Link2, Search, ExternalLink, BarChart3, ChevronDown, ChevronUp, Layers, ShieldCheck, CheckCircle2, XCircle, FileSearch, FileDown } from "lucide-react";
 import { toast } from "sonner";
 import { exportDomainReport } from "@/lib/pdf";
+import { enrichWithPuterEngines } from "@/lib/puterEngines";
 
 const priColor = { high: "bg-red-100 text-red-700 border-red-200", medium: "bg-amber-100 text-amber-700 border-amber-200", low: "bg-gray-100 text-gray-600 border-gray-200" };
 const posColor = { top: "bg-green-100 text-green-700 border-green-200", recommended: "bg-green-100 text-green-700 border-green-200", passing: "bg-amber-100 text-amber-700 border-amber-200" };
@@ -82,6 +83,18 @@ export default function DomainAnalysis() {
       if (snap.status === "done" && snap.result) {
         setResult(snap.result);
         load();
+        // Enrich citation_sources with Perplexity + Grok via puter.js (silent on failure).
+        (async () => {
+          try {
+            const r = snap.result;
+            const enriched = await enrichWithPuterEngines({
+              query: r.domain || r.brand || "",
+              brand: r.brand || r.domain || "",
+              sources: r.citation_sources || [],
+            });
+            setResult((prev) => (prev && prev.id === r.id ? { ...prev, citation_sources: enriched } : prev));
+          } catch { /* silent */ }
+        })();
       } else if (snap.status === "error") {
         toast.error(typeof snap.error === "string" ? snap.error : "Analysis failed — please try again");
       }
@@ -450,7 +463,17 @@ export default function DomainAnalysis() {
       {past.length === 0 ? <EmptyState icon={Globe} text="No domain reports yet." /> : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {past.map((p) => (
-            <button key={p.id} onClick={() => { setJobResult(JOB_KEY, p); setResult(p); setShowAllCites(false); setShowAllPrompts(false); window.scrollTo({ top: 0, behavior: "smooth" }); }} data-testid={`domain-past-${p.id}`}
+            <button key={p.id} onClick={async () => {
+              setJobResult(JOB_KEY, p); setResult(p); setShowAllCites(false); setShowAllPrompts(false); window.scrollTo({ top: 0, behavior: "smooth" });
+              try {
+                const enriched = await enrichWithPuterEngines({
+                  query: p.domain || p.brand || "",
+                  brand: p.brand || p.domain || "",
+                  sources: p.citation_sources || [],
+                });
+                setResult((prev) => (prev && prev.id === p.id ? { ...prev, citation_sources: enriched } : prev));
+              } catch { /* silent */ }
+            }} data-testid={`domain-past-${p.id}`}
               className="text-left bg-white border border-border/60 rounded-xl p-5 transition-transform duration-200 hover:-translate-y-1 hover:shadow-lg">
               <div className="flex items-center justify-between">
                 <span className="font-head font-bold truncate">{p.domain}</span>

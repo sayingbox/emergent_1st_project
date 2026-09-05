@@ -13,6 +13,7 @@ import {
   Zap, ShieldCheck, Newspaper, Users, Gauge, Bot, MapPin, MessageSquare, Star, Wrench,
 } from "lucide-react";
 import { toast } from "sonner";
+import { enrichWithPuterEngines } from "@/lib/puterEngines";
 
 const severityColor = {
   high: "bg-red-100 text-red-700 border-red-200",
@@ -32,7 +33,9 @@ export default function ProjectDetail() {
   const [project, setProject] = useState(null);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState({}); // pageIdx -> bool
+  const [puterCitations, setPuterCitations] = useState(null); // enriched citations from puter.js
   const pollRef = useRef(null);
+  const puterKeyRef = useRef(null); // "id|citations-length" so we only enrich once per state
   const navigate = useNavigate();
 
   const load = async () => {
@@ -54,6 +57,28 @@ export default function ProjectDetail() {
     pollRef.current = setInterval(load, 5000);
     return () => pollRef.current && clearInterval(pollRef.current);
   }, [id]);
+
+  // Enrich Web Citations with real Perplexity + Grok tags via puter.js (browser).
+  // Fires once when we first see a stable non-empty citations list per project scan.
+  useEffect(() => {
+    if (!project || project.status === "processing") return;
+    const cites = project.citations || [];
+    if (cites.length === 0) return;
+    const key = `${project.id}|${cites.length}|${cites[0]?.url || ""}`;
+    if (puterKeyRef.current === key) return;
+    puterKeyRef.current = key;
+    const brand = project.brand?.brand || project.domain || "";
+    (async () => {
+      try {
+        const enriched = await enrichWithPuterEngines({
+          query: project.domain || brand,
+          brand,
+          sources: cites,
+        });
+        setPuterCitations({ key, list: enriched });
+      } catch { /* silent */ }
+    })();
+  }, [project]);
 
   const rescan = async () => {
     try {
@@ -77,7 +102,9 @@ export default function ProjectDetail() {
   const processing = project.status === "processing";
   const errored = project.status === "error";
   const pages = project.pages || [];
-  const citations = project.citations || [];
+  const citations = (puterCitations && puterCitations.key === `${project.id}|${(project.citations || []).length}|${(project.citations || [])[0]?.url || ""}`)
+    ? puterCitations.list
+    : (project.citations || []);
   const rankings = project.rankings || [];
   const tech = project.technical_readiness || {};
   const bp = project.brand_presence || {};

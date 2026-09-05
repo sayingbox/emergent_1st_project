@@ -17,6 +17,7 @@ import { PageHeader, EmptyState } from "@/components/ui-bits";
 import { scoreColor } from "@/components/ScoreGauge";
 import { Link2, Loader2, Sparkles, CheckCircle2, XCircle, Globe, Search, ShieldCheck, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
+import { enrichWithPuterEngines } from "@/lib/puterEngines";
 
 const typeColor = {
   official: "bg-blue-50 text-blue-700",
@@ -147,7 +148,19 @@ export default function Citations() {
     load();
     const unsub = subscribeJob(JOB_KEY, (snap) => {
       setStatus(snap.status || "idle");
-      if (snap.status === "done" && snap.result) { setResult(snap.result); load(); }
+      if (snap.status === "done" && snap.result) {
+        setResult(snap.result); load();
+        // Enrich engine tags with real Perplexity + Grok citations via puter.js.
+        // User-pays; if sign-in is skipped we silently keep the backend engines.
+        (async () => {
+          try {
+            const brand = snap.result.user_domain || snap.result.domain || "";
+            const q = snap.result.query || brand;
+            const enriched = await enrichWithPuterEngines({ query: q, brand, sources: snap.result.sources || [] });
+            setResult((prev) => (prev && prev.id === snap.result.id ? { ...prev, sources: enriched } : prev));
+          } catch { /* silent */ }
+        })();
+      }
       else if (snap.status === "error") {
         toast.error(formatApiErrorDetail(snap.error?.response?.data?.detail) || "Citation lookup failed");
       }
@@ -233,7 +246,15 @@ export default function Citations() {
           {past.map((p) => (
             <button
               key={p.id}
-              onClick={() => { setJobResult(JOB_KEY, p); setResult(p); window.scrollTo({ top: 0, behavior: "smooth" }); }}
+              onClick={async () => {
+                setJobResult(JOB_KEY, p); setResult(p); window.scrollTo({ top: 0, behavior: "smooth" });
+                try {
+                  const brand = p.user_domain || p.domain || "";
+                  const q = p.query || brand;
+                  const enriched = await enrichWithPuterEngines({ query: q, brand, sources: p.sources || [] });
+                  setResult((prev) => (prev && prev.id === p.id ? { ...prev, sources: enriched } : prev));
+                } catch { /* silent */ }
+              }}
               data-testid={`cite-past-${p.id}`}
               className="text-left bg-white border border-border/60 rounded-xl p-5 transition-transform duration-200 hover:-translate-y-1 hover:shadow-lg"
             >

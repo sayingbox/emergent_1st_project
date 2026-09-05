@@ -506,8 +506,12 @@ def _extract_snippet(html: str, needle: str, ctx: int = 160) -> str:
         return ""
 
 
-async def discover_citations(domain: str, brand_name: str, brand_summary: str, llm_call) -> list[dict]:
-    """LLM proposes candidate citation URLs → HTTP-fetch each → verify the domain is mentioned in the page's HTML."""
+async def discover_citations(domain: str, brand_name: str, brand_summary: str, llm_call, attribute_fn=None) -> list[dict]:
+    """LLM proposes candidate citation URLs → HTTP-fetch each → verify the domain is mentioned in the page's HTML.
+
+    If `attribute_fn(brand, query, urls) -> {engine: [urls]}` is provided, the
+    engine tags on verified citations are OVERWRITTEN with real per-engine
+    attribution (ChatGPT/Gemini/Claude) instead of the LLM's raw guesses."""
     try:
         prompt = citation_prompt(domain, brand_name or domain, brand_summary or "")
         result = await llm_call(CITATION_SYSTEM, prompt, f"cite-{domain}")
@@ -568,6 +572,27 @@ async def discover_citations(domain: str, brand_name: str, brand_summary: str, l
 
     verified_all = await asyncio.gather(*(verify(c) for c in unique))
     verified_all.sort(key=lambda r: (not r["verified"], -(r["http_status"] or 0)))
+
+    # REAL per-engine attribution: overwrite LLM's engine guesses using the
+    # actual ChatGPT/Gemini/Claude picks. Only run on verified sources to save
+    # credits — one attribution call covers all engines concurrently upstream.
+    if attribute_fn is not None:
+        verified_urls = [r["url"] for r in verified_all if r.get("verified")]
+        if verified_urls:
+            try:
+                engine_map = await attribute_fn(brand_name or domain, domain, verified_urls)
+                reverse: dict[str, set[str]] = {}
+                for eng, urls in (engine_map or {}).items():
+                    for u in urls or []:
+                        reverse.setdefault(u, set()).add(eng)
+                any_real = any(urls for urls in (engine_map or {}).values())
+                for r in verified_all:
+                    if r.get("verified"):
+                        real = sorted(reverse.get(r["url"], set()))
+                        if real or any_real:
+                            r["engines"] = real
+            except Exception as e:
+                logger.warning(f"discover_citations: attribution failed: {e}")
     return verified_all
 
 
@@ -1160,7 +1185,7 @@ async def discover_citation_opportunities(brand: str, services: list, domain: st
     return out[:30]
 
 
-async def run_full_project_scan(domain: str, llm_call, max_pages: int = DEFAULT_MAX_PAGES) -> dict:
+async def run_full_project_scan(domain: str, llm_call, max_pages: int = DEFAULT_MAX_PAGES, attribute_fn=None) -> dict:
     """
     Orchestrator: deep-crawl the domain, analyze each page, discover the brand via LLM,
     find citations, rank prompts, plus extended audit (technical readiness, brand
@@ -1184,7 +1209,7 @@ async def run_full_project_scan(domain: str, llm_call, max_pages: int = DEFAULT_
     brand = await discover_brand(domain, raw_pages, llm_call)
 
     # 4) Citations + Rankings in parallel (independent LLM calls + HTTP)
-    citations_task = discover_citations(domain, brand["brand"], brand["summary"], llm_call)
+    citations_task = discover_citations(domain, brand["brand"], brand["summary"], llm_call, attribute_fn=attribute_fn)
     rankings_task = rank_prompts(domain, brand["brand"], brand["summary"], brand["services"], llm_call)
     citations, rankings = await asyncio.gather(citations_task, rankings_task)
 

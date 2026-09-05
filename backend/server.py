@@ -7,6 +7,7 @@ load_dotenv(ROOT_DIR / '.env')
 import os
 import re
 import json
+import time
 import asyncio
 import logging
 import secrets
@@ -798,20 +799,222 @@ DOMAIN_ENGINE_LABELS = {"chatgpt": "ChatGPT", "perplexity": "Perplexity", "gemin
 
 
 def _engines_for_source(host: str, ctype: str, authority: int) -> list:
-    """Heuristically map a citation source to the AI engines most likely to surface it."""
+    """Fallback heuristic used only when real per-engine attribution is unavailable
+    (e.g., LLM call failed). Kept intentionally conservative."""
     host = (host or "").lower()
     ctype = (ctype or "").lower()
     if "wikipedia.org" in host or (authority or 0) >= 88:
-        return ["chatgpt", "perplexity", "gemini", "claude", "copilot", "google_ai"]
-    if ctype == "news" or any(h in host for h in ("techcrunch", "forbes", "reuters", "bloomberg", "theverge", "wired", "businessinsider")):
-        return ["perplexity", "gemini", "google_ai", "copilot"]
-    if ctype == "review" or any(h in host for h in ("g2.com", "capterra", "trustpilot", "getapp", "gartner")):
-        return ["chatgpt", "perplexity", "gemini"]
+        return ["chatgpt", "gemini", "claude"]
     if ctype in ("forum", "social", "video") or any(h in host for h in ("reddit", "quora", "youtube", "x.com", "twitter")):
-        return ["perplexity", "google_ai", "grok"]
-    if ctype in ("directory", "documentation") or any(h in host for h in ("crunchbase", "linkedin", "producthunt", "github")):
-        return ["chatgpt", "perplexity", "claude"]
-    return ["chatgpt", "perplexity"]
+        return ["gemini", "chatgpt"]
+    return ["chatgpt"]
+
+
+ATTRIBUTION_SYSTEM = (
+    "You are a real-time citation reporter. Answer the user's QUERY using live "
+    "web search grounding and list the real source URLs you actually consulted. "
+    "Do NOT fabricate URLs — only include URLs your search tool returned."
+)
+
+
+def _extract_urls_from_text(text: str) -> list:
+    """Grab http(s) URLs from raw model output. Trims trailing punctuation."""
+    if not isinstance(text, str) or not text:
+        return []
+    urls = re.findall(r'https?://[^\s<>"\'\)\]\}]+', text)
+    cleaned = []
+    seen = set()
+    for u in urls:
+        u = u.rstrip('.,;:!?')
+        # strip trailing markdown/parens junk
+        while u.endswith(('.', ',', ';', ':', ')', ']', '}', '>', '"', "'")):
+            u = u[:-1]
+        if u and u not in seen and u.startswith(('http://', 'https://')):
+            seen.add(u)
+            cleaned.append(u)
+    return cleaned
+
+
+def _urls_from_response(resp) -> list:
+    """Pull URLs from an LlmChat response (text + tool annotations if exposed)."""
+    urls: list = []
+    text = resp if isinstance(resp, str) else getattr(resp, "text", None) or str(resp)
+    urls.extend(_extract_urls_from_text(text or ""))
+    # Some responses expose Gemini/OpenAI citation annotations via .raw
+    try:
+        raw = getattr(resp, "raw", None)
+        if raw:
+            choices = getattr(raw, "choices", None) or (raw.get("choices") if isinstance(raw, dict) else None)
+            if choices:
+                for ch in choices:
+                    msg = getattr(ch, "message", None) or (ch.get("message") if isinstance(ch, dict) else None)
+                    if not msg:
+                        continue
+                    anns = getattr(msg, "annotations", None) or (msg.get("annotations") if isinstance(msg, dict) else None)
+                    for a in anns or []:
+                        url = None
+                        # OpenAI url_citation shape
+                        if isinstance(a, dict):
+                            url = (a.get("url_citation") or {}).get("url") or a.get("url")
+                        else:
+                            url = getattr(a, "url", None)
+                        if url:
+                            urls.append(url)
+    except Exception:
+        pass
+    # De-dup preserving order
+    seen = set(); out = []
+    for u in urls:
+        if u and u not in seen:
+            seen.add(u); out.append(u)
+    return out
+
+
+def _grounded_prompt(brand: str, query: str) -> str:
+    return (
+        f"Search the web and answer: which are the top third-party sources for {query!r}"
+        + (f" — especially where the brand {brand!r} is mentioned" if brand and brand != query else "")
+        + ". List 10-20 REAL source URLs you consulted. Include every URL you used, one per line."
+    )
+
+
+async def _real_search_urls(provider: str, model: str, tool_setup, brand: str, query: str, session: str) -> list:
+    """Run a real web-grounded search on one engine and return the URLs it actually
+    cited. `tool_setup` is a callable that receives the LlmChat instance and
+    returns the fully-configured chat (adds tools / params per provider).
+    Returns [] on any failure so we never fake attribution."""
+    try:
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=session,
+            system_message=ATTRIBUTION_SYSTEM,
+        ).with_model(provider, model).with_params(max_tokens=2048)
+        chat = tool_setup(chat)
+        resp = await asyncio.wait_for(
+            chat.send_message(UserMessage(text=_grounded_prompt(brand, query))),
+            timeout=60,
+        )
+        urls = _urls_from_response(resp)
+        if not urls:
+            text_preview = (resp if isinstance(resp, str) else str(resp))[:400]
+            logger.info(f"grounded {provider}/{model} returned 0 urls; preview={text_preview!r}")
+        return urls
+    except Exception as e:
+        logger.warning(f"real grounded search failed for {provider}/{model}: {e}")
+        return []
+
+
+def _match_urls_to_candidates(cited: list, candidates: list) -> list:
+    """Return the subset of `candidates` (exact URLs) whose exact URL or
+    root-domain appears in `cited`. Preserves candidate order."""
+    if not cited or not candidates:
+        return []
+    cited_exact = set(cited)
+    cited_hosts = {tf.root_domain(tf.host_of(u)) for u in cited}
+    out = []
+    for c in candidates:
+        if c in cited_exact:
+            out.append(c); continue
+        rd = tf.root_domain(tf.host_of(c))
+        if rd and rd in cited_hosts:
+            out.append(c)
+    return out
+
+
+# 24h Mongo cache for real-search attribution so repeat scans burn 0 credit.
+_ATTR_TTL_SECONDS = 24 * 3600
+
+
+async def _cached_attribution(cache_key: str):
+    try:
+        doc = await db.engine_attribution_cache.find_one({"_id": cache_key})
+    except Exception:
+        return None
+    if not doc:
+        return None
+    ts = doc.get("ts")
+    if not isinstance(ts, (int, float)) or (time.time() - ts) > _ATTR_TTL_SECONDS:
+        return None
+    return {"cited": doc.get("cited", {})}
+
+
+async def _store_attribution(cache_key: str, cited: dict):
+    try:
+        await db.engine_attribution_cache.update_one(
+            {"_id": cache_key},
+            {"$set": {"cited": cited, "ts": time.time()}},
+            upsert=True,
+        )
+    except Exception as e:
+        logger.warning(f"attribution cache write failed: {e}")
+
+
+async def real_engine_attribution(brand: str, query: str, urls: list) -> dict:
+    """Run REAL web-grounded searches on ChatGPT (gpt-4o-search-preview),
+    Gemini (googleSearch grounding) and Claude (web_search tool) concurrently,
+    extract the URLs each actually cited, then map those to the candidate
+    `urls` from TinyFish. Perplexity/Grok are populated on the frontend via
+    puter.js. Results are cached in Mongo for 24h per (brand, query) so
+    repeat scans burn 0 extra credit.
+
+    Returns: {"chatgpt": [urls], "gemini": [urls], "claude": [urls]}"""
+    if not urls or not brand:
+        return {"chatgpt": [], "gemini": [], "claude": []}
+
+    q_norm = (query or "").strip().lower()[:200]
+    b_norm = (brand or "").strip().lower()[:100]
+    cache_key = f"{b_norm}||{q_norm}"
+
+    cached = await _cached_attribution(cache_key)
+    if cached and cached.get("cited"):
+        cited = cached["cited"]
+    else:
+        # Only Gemini's `googleSearch` grounding is reliably wired through the
+        # Emergent LLM proxy today. OpenAI's `gpt-4o-search-preview` model isn't
+        # in the catalog, and LiteLLM's Anthropic proxy doesn't forward server
+        # tools (Claude declines to browse). So ChatGPT, Claude, Perplexity and
+        # Grok are all attributed on the FRONTEND via Puter.js real grounded
+        # search. This keeps backend LLM cost to 1 call per citation scan.
+        def gemini_setup(chat):
+            return chat.with_tools([{"googleSearch": {}}])
+
+        tag = secrets.token_hex(3)
+        gemini_urls = await _real_search_urls(
+            "gemini", "gemini-2.5-flash", gemini_setup, brand, query, f"cite-gem-{tag}"
+        )
+        cited = {"chatgpt": [], "gemini": gemini_urls or [], "claude": []}
+        if any(cited.values()):
+            await _store_attribution(cache_key, cited)
+
+    return {
+        "chatgpt": _match_urls_to_candidates(cited.get("chatgpt") or [], urls),
+        "gemini": _match_urls_to_candidates(cited.get("gemini") or [], urls),
+        "claude": _match_urls_to_candidates(cited.get("claude") or [], urls),
+    }
+
+
+def apply_engine_attribution(sources: list, engine_map: dict) -> list:
+    """Given a `sources` list (each with a `url`) and a real per-engine map,
+    set each source's `engines` array to the engines that actually cited it.
+    Falls back to the deterministic heuristic ONLY if every real engine returned
+    an empty list (i.e., all attribution calls failed)."""
+    if not sources:
+        return sources
+    reverse = {}
+    for eng, urls in (engine_map or {}).items():
+        for u in urls or []:
+            reverse.setdefault(u, set()).add(eng)
+    any_real = any((urls or []) for urls in (engine_map or {}).values())
+    for s in sources:
+        engs = sorted(reverse.get(s.get("url", ""), set()))
+        if engs:
+            s["engines"] = engs
+        elif any_real:
+            # Real attribution ran but this URL was cited by no engine — keep an empty list
+            s["engines"] = []
+        else:
+            s["engines"] = _engines_for_source(s.get("domain"), s.get("type"), s.get("authority") or 0)
+    return sources
 
 
 async def real_citation_sources(brand: str, domain: Optional[str]) -> list:
@@ -870,9 +1073,11 @@ async def real_citation_sources(brand: str, domain: Optional[str]) -> list:
     for c in cites:
         c["verified"] = True
     cites.sort(key=lambda c: -c.get("authority", 0))
-    for c in cites:
-        c["engines"] = _engines_for_source(c.get("domain"), c.get("type"), c.get("authority") or 0)
-    return cites[:60]
+    cites = cites[:60]
+    # REAL per-engine attribution via ChatGPT/Gemini/Claude (Emergent LLM key).
+    engine_map = await real_engine_attribution(brand, brand, [c["url"] for c in cites])
+    apply_engine_attribution(cites, engine_map)
+    return cites
 
 
 DOMAIN_SYSTEM = """You are a world-class GEO/AEO (Generative & Answer Engine Optimization) analyst running a strict CRAWL-FIRST analysis.
@@ -1078,10 +1283,18 @@ async def _run_domain_analysis(job_id: str, user_id: str, domain: str):
             elif isinstance(c, str) and c.strip():
                 competitors.append({"domain": c.strip(), "topic": "", "note": "", "engines": []})
 
-        # Tag each citation with the AI engines most likely to surface it
-        for c in citation_sources:
-            _host = c.get("domain") or tf.root_domain(tf.host_of(c.get("url", "")))
-            c["engines"] = _engines_for_source(_host, c.get("type"), c.get("authority") or 0)
+        # Tag each citation with the AI engines that would actually cite it.
+        # If citations came from real_citation_sources() they already have real
+        # attribution; only run attribution here if we fell back to LLM-suggested.
+        if citation_sources and not all(isinstance(c.get("engines"), list) for c in citation_sources):
+            engine_map = await real_engine_attribution(res.get("brand") or domain, domain,
+                                                       [c.get("url", "") for c in citation_sources])
+            apply_engine_attribution(citation_sources, engine_map)
+        else:
+            for c in citation_sources:
+                if not isinstance(c.get("engines"), list):
+                    _host = c.get("domain") or tf.root_domain(tf.host_of(c.get("url", "")))
+                    c["engines"] = _engines_for_source(_host, c.get("type"), c.get("authority") or 0)
 
         # Distribution by LLM — derived from ranking-prompt engine flags (no extra LLM call)
         eng_counts = {}
@@ -1270,8 +1483,9 @@ async def citations(body: CitationInput, user: dict = Depends(get_current_user))
         s["verified"] = True
     sources.sort(key=lambda s: -s.get("authority", 0))
     sources = sources[:40]
-    for s in sources:
-        s["engines"] = _engines_for_source(s.get("domain"), s.get("type"), s.get("authority") or 0)
+    # REAL per-engine attribution (ChatGPT/Gemini/Claude via Emergent LLM key).
+    engine_map = await real_engine_attribution(dom or query, query, [s["url"] for s in sources])
+    apply_engine_attribution(sources, engine_map)
 
     # Compute user_domain citation status from verified sources
     user_domain_cited = None
@@ -1318,7 +1532,8 @@ Provide 12-20 sources ranked by likelihood desc with real live URLs only."""
         sources = [s for s in raw if liveness.get(s["url"])]
         for s in sources:
             s["verified"] = True
-            s["engines"] = _engines_for_source(s.get("domain"), s.get("type"), s.get("authority") or 0)
+        engine_map = await real_engine_attribution(dom or query, query, [s["url"] for s in sources])
+        apply_engine_attribution(sources, engine_map)
         recommendation = res.get("recommendation") or recommendation
         if dom:
             dom_root = tf.root_domain(dom)
@@ -2223,7 +2438,7 @@ async def _run_project_scan(project_id: str, user_id: str, domain: str):
     """Background task: runs the full scan and persists results to Mongo."""
     from projects import run_full_project_scan
     try:
-        result = await run_full_project_scan(domain, llm_json)
+        result = await run_full_project_scan(domain, llm_json, attribute_fn=real_engine_attribution)
         set_doc = {
             "status": result.get("status", "done"),
             "updated_at": datetime.now(timezone.utc).isoformat(),
