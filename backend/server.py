@@ -1405,6 +1405,51 @@ async def domain_get(job_id: str, user: dict = Depends(get_current_user)):
 
 
 
+@api_router.post("/visibility/suggest-prompts")
+async def visibility_suggest_prompts(body: dict, user: dict = Depends(get_current_user)):
+    """Return ~10 highly relevant AI-search prompts for a brand/domain.
+    One small LLM call — grounded in the brand's real category so prompts
+    match what customers actually ask AI engines. Very low credit cost."""
+    brand = (body.get("brand") or "").strip()
+    domain = (body.get("domain") or "").strip()
+    if not brand and not domain:
+        raise HTTPException(status_code=400, detail="Provide a brand or domain")
+    system = (
+        "You generate high-quality AI-search prompts (the kind users type into ChatGPT, "
+        "Perplexity, Gemini, Claude, Copilot, Grok) for tracking a brand's visibility. "
+        "Prompts must be short, natural, buyer-intent phrasings — never questions about "
+        "the brand itself. Respond with ONLY valid minified JSON."
+    )
+    prompt = f"""BRAND: {brand or domain}{(' (' + domain + ')') if brand and domain else ''}
+
+Return JSON:
+{{"prompts": ["prompt 1", "prompt 2", ...]}}
+
+Rules:
+- 10 prompts, ranked by likelihood a real buyer would ask them.
+- Category-relevant (infer the brand's category from its name/domain).
+- 4-9 words each. No brand name in prompts (they're generic buyer queries).
+- Mix comparison ("best X for Y"), how-to ("how to X"), alternatives ("X alternatives"),
+  and top-N ("top X tools 2025") formats.
+- No duplicates, no fluff, no questions about the brand itself.
+"""
+    try:
+        res = await llm_json(system, prompt, f"vis-suggest-{user['id']}-{secrets.token_hex(3)}", max_tokens=1024)
+    except Exception as e:
+        logger.warning(f"visibility suggest prompts failed: {e}")
+        raise HTTPException(status_code=502, detail="Could not generate prompts — please try again.")
+    raw = res.get("prompts") or []
+    clean = []
+    seen = set()
+    for p in raw:
+        if not isinstance(p, str):
+            continue
+        p = p.strip().strip('"\'')
+        if p and p.lower() not in seen and 3 <= len(p.split()) <= 14:
+            seen.add(p.lower()); clean.append(p)
+    return {"prompts": clean[:10]}
+
+
 @api_router.post("/visibility")
 async def visibility(body: VisibilityInput, user: dict = Depends(get_current_user)):
     prompts = [p.strip() for p in body.prompts if p.strip()][:12]
@@ -1429,7 +1474,19 @@ Return JSON:
 }}
 One result object per prompt, same order."""
     res = await llm_json(system, prompt, f"vis-{user['id']}")
+
+    # Attach REAL citation sources from TinyFish live web search (0 LLM credit).
+    # Real per-engine attribution (Gemini via googleSearch grounding on backend +
+    # ChatGPT/Claude/Perplexity/Grok via Puter.js on the frontend) is applied inside
+    # real_citation_sources() and enriched further client-side.
+    try:
+        cite_sources = await real_citation_sources(body.brand, body.domain or None)
+    except Exception as e:
+        logger.warning(f"visibility citation_sources failed: {e}")
+        cite_sources = []
+
     doc = {"id": secrets.token_hex(12), "user_id": user["id"], "brand": body.brand, "domain": body.domain,
+           "citation_sources": cite_sources,
            "created_at": datetime.now(timezone.utc).isoformat(), **res}
     await db.visibility.insert_one(doc)
     doc.pop("_id", None)
