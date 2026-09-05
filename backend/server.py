@@ -342,10 +342,11 @@ def strip_json(text: str) -> str:
 async def llm_json(system: str, prompt: str, session: str, max_tokens: int = 4096) -> dict:
     """Call Claude Sonnet 4.6 with a hard timeout and one automatic retry.
 
-    Prior behaviour: no timeout (a hung Anthropic connection would hold the
-    request until the client polling window expired, showing "failed" to the
-    user with no useful signal). Now: 90 s hard cap + one retry on transient
-    failures + a specific, actionable HTTPException message on final failure.
+    Timeouts are kept well below Cloudflare's ~100s edge cap so the origin
+    always returns cleanly:
+      - 45s per attempt (was 90s)
+      - Retry only fires on non-timeout errors so total wall time stays under
+        ~95s worst case (45s + 1.2s backoff + 45s).
     """
     last_err: Optional[Exception] = None
     for attempt in range(2):  # initial + 1 retry
@@ -355,7 +356,7 @@ async def llm_json(system: str, prompt: str, session: str, max_tokens: int = 409
                 session_id=session,
                 system_message=system,
             ).with_model("anthropic", "claude-sonnet-4-6").with_params(max_tokens=max_tokens)
-            resp = await asyncio.wait_for(chat.send_message(UserMessage(text=prompt)), timeout=90)
+            resp = await asyncio.wait_for(chat.send_message(UserMessage(text=prompt)), timeout=45)
             raw = strip_json(resp if isinstance(resp, str) else str(resp))
             try:
                 return json.loads(raw)
@@ -368,8 +369,11 @@ async def llm_json(system: str, prompt: str, session: str, max_tokens: int = 409
                 # same (bad) response cached.
                 raise RuntimeError("AI returned an unparseable response")
         except asyncio.TimeoutError as e:
+            # Do NOT retry on timeout — it just doubles the wall time and often
+            # trips Cloudflare's edge timeout. Fail fast with a friendly error.
             last_err = e
             logger.warning(f"llm_json timeout on attempt {attempt + 1} for session={session}")
+            break
         except Exception as e:
             last_err = e
             logger.warning(f"llm_json error on attempt {attempt + 1} for session={session}: {e}")
@@ -379,7 +383,7 @@ async def llm_json(system: str, prompt: str, session: str, max_tokens: int = 409
     # Final failure — surface a clean message
     detail = "AI is taking too long to respond right now — please retry in a moment."
     if isinstance(last_err, asyncio.TimeoutError):
-        detail = "AI request timed out. This can happen if the content is very large. Please retry — a fresh attempt usually succeeds."
+        detail = "AI request timed out. This can happen when the site or prompt is very large. Please retry — a fresh attempt usually succeeds."
     raise HTTPException(status_code=502, detail=detail)
 
 
@@ -894,7 +898,7 @@ async def _real_search_urls(provider: str, model: str, tool_setup, brand: str, q
         chat = tool_setup(chat)
         resp = await asyncio.wait_for(
             chat.send_message(UserMessage(text=_grounded_prompt(brand, query))),
-            timeout=60,
+            timeout=25,
         )
         urls = _urls_from_response(resp)
         if not urls:
@@ -1523,70 +1527,91 @@ async def visibility_prompt_sources(body: dict, user: dict = Depends(get_current
     would surface). Lazy per-click endpoint used by the Visibility Tracker
     when the user expands a prompt row. Uses TinyFish live web search (0 LLM)
     + Gemini `googleSearch` grounding for real per-engine attribution, cached
-    24h in Mongo so repeat expansions of the same prompt cost 0 LLM."""
+    24h in Mongo so repeat expansions of the same prompt cost 0 LLM.
+
+    The whole flow is wrapped in an 85s hard cap so we always return under
+    Cloudflare's edge timeout (~100s). If the deep attribution step is slow,
+    we return the sources with the heuristic engine tags and skip real
+    grounding for this call — the source list itself is always shown."""
     prompt = (body.get("prompt") or "").strip()
     brand = (body.get("brand") or "").strip()
     domain = (body.get("domain") or "").strip() or None
     if not prompt:
         raise HTTPException(status_code=400, detail="prompt is required")
 
-    # Cache-key includes brand+prompt so identical prompts across projects share.
-    cache_key = f"psrc||{brand.lower()}||{prompt.lower()}"[:400]
-    cached = None
-    try:
-        cached_doc = await db.prompt_source_cache.find_one({"_id": cache_key})
-        if cached_doc and (time.time() - float(cached_doc.get("ts", 0))) < _ATTR_TTL_SECONDS:
-            cached = cached_doc.get("sources")
-    except Exception:
+    async def _run():
+        # Cache-key includes brand+prompt so identical prompts across projects share.
+        cache_key = f"psrc||{brand.lower()}||{prompt.lower()}"[:400]
         cached = None
-    if cached is not None:
-        return {"prompt": prompt, "sources": cached, "cached": True}
+        try:
+            cached_doc = await db.prompt_source_cache.find_one({"_id": cache_key})
+            if cached_doc and (time.time() - float(cached_doc.get("ts", 0))) < _ATTR_TTL_SECONDS:
+                cached = cached_doc.get("sources")
+        except Exception:
+            cached = None
+        if cached is not None:
+            return {"prompt": prompt, "sources": cached, "cached": True}
 
-    # 1) Real web search results for this exact prompt (0 LLM credit).
-    web = await tf.tf_search(prompt, max_results=20)
-    news = await tf.tf_search(prompt, domain_type="news", max_results=6)
-    seen_hosts, sources = set(), []
-    for r, dt in [(x, "web") for x in web] + [(x, "news") for x in news]:
-        url = r.get("url", "")
-        host = tf.root_domain(tf.host_of(url))
-        if not url or not host or host in seen_hosts:
-            continue
-        if host in ("google.com", "bing.com", "duckduckgo.com", "yahoo.com") or "/goto?" in url or "/url?" in url:
-            continue
-        seen_hosts.add(host)
-        sources.append({
-            "domain": host,
-            "url": url,
-            "title": r.get("title") or "",
-            "type": tf.type_for(url, dt),
-            "authority": tf.authority_for(url),
-            "why": r.get("snippet") or "",
-        })
+        # 1) Real web search results for this exact prompt (0 LLM credit).
+        web = await tf.tf_search(prompt, max_results=20)
+        news = await tf.tf_search(prompt, domain_type="news", max_results=6)
+        seen_hosts, sources = set(), []
+        for r, dt in [(x, "web") for x in web] + [(x, "news") for x in news]:
+            url = r.get("url", "")
+            host = tf.root_domain(tf.host_of(url))
+            if not url or not host or host in seen_hosts:
+                continue
+            if host in ("google.com", "bing.com", "duckduckgo.com", "yahoo.com") or "/goto?" in url or "/url?" in url:
+                continue
+            seen_hosts.add(host)
+            sources.append({
+                "domain": host,
+                "url": url,
+                "title": r.get("title") or "",
+                "type": tf.type_for(url, dt),
+                "authority": tf.authority_for(url),
+                "why": r.get("snippet") or "",
+            })
 
-    # 2) HTTP-verify liveness — never show a dead source.
-    liveness = await verify_live_urls([s["url"] for s in sources])
-    sources = [s for s in sources if liveness.get(s["url"])]
-    for s in sources:
-        s["verified"] = True
-    sources.sort(key=lambda s: -s.get("authority", 0))
-    sources = sources[:20]
+        # 2) HTTP-verify liveness — never show a dead source.
+        liveness = await verify_live_urls([s["url"] for s in sources])
+        sources = [s for s in sources if liveness.get(s["url"])]
+        for s in sources:
+            s["verified"] = True
+        sources.sort(key=lambda s: -s.get("authority", 0))
+        sources = sources[:20]
 
-    # 3) Real per-engine attribution (Gemini grounding on backend + client-side
-    #    Puter.js for ChatGPT/Claude/Perplexity/Grok).
-    engine_map = await real_engine_attribution(brand or prompt, prompt, [s["url"] for s in sources])
-    apply_engine_attribution(sources, engine_map)
+        # 3) Real per-engine attribution (Gemini grounding on backend + client-side
+        #    Puter.js for ChatGPT/Claude/Perplexity/Grok). Wrapped so a slow
+        #    grounding call NEVER blocks the whole response.
+        try:
+            engine_map = await asyncio.wait_for(
+                real_engine_attribution(brand or prompt, prompt, [s["url"] for s in sources]),
+                timeout=35,
+            )
+            apply_engine_attribution(sources, engine_map)
+        except asyncio.TimeoutError:
+            logger.warning(f"prompt-sources: attribution timed out for prompt={prompt!r} — returning sources with heuristic engines")
+            for s in sources:
+                s["engines"] = _engines_for_source(s.get("domain"), s.get("type"), s.get("authority") or 0)
 
-    # 4) Persist to cache for 24h
+        # 4) Persist to cache for 24h
+        try:
+            await db.prompt_source_cache.update_one(
+                {"_id": cache_key},
+                {"$set": {"sources": sources, "ts": time.time(), "prompt": prompt, "brand": brand}},
+                upsert=True,
+            )
+        except Exception as e:
+            logger.warning(f"prompt_source_cache write failed: {e}")
+
+        return {"prompt": prompt, "sources": sources, "cached": False}
+
     try:
-        await db.prompt_source_cache.update_one(
-            {"_id": cache_key},
-            {"$set": {"sources": sources, "ts": time.time(), "prompt": prompt, "brand": brand}},
-            upsert=True,
-        )
-    except Exception as e:
-        logger.warning(f"prompt_source_cache write failed: {e}")
-
-    return {"prompt": prompt, "sources": sources, "cached": False}
+        return await asyncio.wait_for(_run(), timeout=85)
+    except asyncio.TimeoutError:
+        logger.warning(f"prompt-sources overall timeout for prompt={prompt!r}")
+        raise HTTPException(status_code=504, detail="This prompt is taking too long — please retry in a moment.")
 
 
 @api_router.post("/visibility")
