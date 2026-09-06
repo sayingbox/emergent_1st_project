@@ -1440,36 +1440,93 @@ async def domain_get(job_id: str, user: dict = Depends(get_current_user)):
 
 
 
+def visibility_limits(user: dict) -> tuple:
+    """Return (project_limit, prompt_limit) for the user's plan. Admins/full_access
+    get generous caps. Users without an active plan get (0, 0)."""
+    from subscriptions import is_active, plan_of
+    if user.get("full_access") or user.get("role") == "admin":
+        return (999, 50)
+    p = plan_of(user)
+    if not p or not is_active(user):
+        return (0, 0)
+    return (p.get("project_limit", 0), p.get("prompt_limit", 20))
+
+
+async def _crawl_site_text(domain: str, max_chars: int = 3500) -> str:
+    """Fetch a domain's homepage and return its visible text (best-effort, fast).
+    Used to ground prompt suggestions in the brand's REAL products/services.
+    Returns '' on any failure so suggestions still work without a crawl."""
+    d = (domain or "").strip().replace("https://", "").replace("http://", "").strip("/")
+    if not d or "." not in d:
+        return ""
+    url = "https://" + d.split("/")[0]
+    try:
+        r = await asyncio.to_thread(requests.get, url, headers={"User-Agent": UA}, timeout=8)
+        if r.status_code >= 400 or not r.text:
+            return ""
+        soup = BeautifulSoup(r.text, "lxml")
+        for tag in soup(["script", "style", "noscript"]):
+            tag.decompose()
+        parts = []
+        if soup.title and soup.title.string:
+            parts.append(soup.title.string.strip())
+        meta = soup.find("meta", attrs={"name": "description"})
+        if meta and meta.get("content"):
+            parts.append(meta["content"].strip())
+        for h in soup.find_all(["h1", "h2", "h3"])[:20]:
+            t = h.get_text(" ", strip=True)
+            if t:
+                parts.append(t)
+        body = soup.get_text(" ", strip=True)
+        text = " ".join(parts) + " " + body
+        return text[:max_chars]
+    except Exception as e:
+        logger.warning(f"_crawl_site_text failed for {domain}: {e}")
+        return ""
+
+
 @api_router.post("/visibility/suggest-prompts")
 async def visibility_suggest_prompts(body: dict, user: dict = Depends(get_current_user)):
-    """Return ~10 highly relevant AI-search prompts for a brand/domain.
-    One small LLM call — grounded in the brand's real category so prompts
-    match what customers actually ask AI engines. Very low credit cost."""
+    """Crawl the brand's website to discover its REAL products/services, then
+    return buyer-intent AI-search prompts grounded in those offerings. One small
+    LLM call (very low credit). Requires BOTH brand and domain."""
     brand = (body.get("brand") or "").strip()
     domain = (body.get("domain") or "").strip()
-    if not brand and not domain:
-        raise HTTPException(status_code=400, detail="Provide a brand or domain")
+    if not brand or not domain:
+        raise HTTPException(status_code=400, detail="Both brand and domain are required")
+
+    _, prompt_limit = visibility_limits(user)
+    if prompt_limit <= 0:
+        prompt_limit = 20
+    site_text = await _crawl_site_text(domain)
+    crawl_note = (
+        f"\n\nThe brand's website was crawled. Use ONLY these real products/services to infer the category:\nWEBSITE_CONTENT:\n{site_text}"
+        if site_text else
+        "\n\n(The website could not be crawled — infer the category from the brand/domain name.)"
+    )
     system = (
         "You generate high-quality AI-search prompts (the kind users type into ChatGPT, "
         "Perplexity, Gemini, Claude, Copilot, Grok) for tracking a brand's visibility. "
-        "Prompts must be short, natural, buyer-intent phrasings — never questions about "
-        "the brand itself. Respond with ONLY valid minified JSON."
+        "You are given the brand's REAL website content — derive the actual products/services "
+        "they offer and generate generic buyer-intent prompts for those categories. "
+        "Prompts must be short, natural buyer queries — never mention the brand itself. "
+        "Respond with ONLY valid minified JSON."
     )
-    prompt = f"""BRAND: {brand or domain}{(' (' + domain + ')') if brand and domain else ''}
+    prompt = f"""BRAND: {brand} ({domain}){crawl_note}
 
 Return JSON:
-{{"prompts": ["prompt 1", "prompt 2", ...]}}
+{{"services": ["the real products/services you found"], "prompts": ["prompt 1", "prompt 2", ...]}}
 
 Rules:
-- 10 prompts, ranked by likelihood a real buyer would ask them.
-- Category-relevant (infer the brand's category from its name/domain).
+- First list the brand's actual products/services (from the crawled content).
+- Then {prompt_limit} prompts, ranked by likelihood a real buyer would ask them, tied to those services.
 - 4-9 words each. No brand name in prompts (they're generic buyer queries).
 - Mix comparison ("best X for Y"), how-to ("how to X"), alternatives ("X alternatives"),
   and top-N ("top X tools 2025") formats.
 - No duplicates, no fluff, no questions about the brand itself.
 """
     try:
-        res = await llm_json(system, prompt, f"vis-suggest-{user['id']}-{secrets.token_hex(3)}", max_tokens=1024)
+        res = await llm_json(system, prompt, f"vis-suggest-{user['id']}-{secrets.token_hex(3)}", max_tokens=1500)
     except Exception as e:
         logger.warning(f"visibility suggest prompts failed: {e}")
         raise HTTPException(status_code=502, detail="Could not generate prompts — please try again.")
@@ -1482,7 +1539,8 @@ Rules:
         p = p.strip().strip('"\'')
         if p and p.lower() not in seen and 3 <= len(p.split()) <= 14:
             seen.add(p.lower()); clean.append(p)
-    return {"prompts": clean[:10]}
+    services = [str(s).strip() for s in (res.get("services") or []) if str(s or "").strip()][:12]
+    return {"prompts": clean[:prompt_limit], "services": services, "crawled": bool(site_text)}
 
 
 @api_router.post("/visibility/expand-prompts")
@@ -1652,9 +1710,33 @@ async def visibility_prompt_sources(body: dict, user: dict = Depends(get_current
 
 @api_router.post("/visibility")
 async def visibility(body: VisibilityInput, user: dict = Depends(get_current_user)):
-    prompts = [p.strip() for p in body.prompts if p.strip()][:40]
-    if not body.brand.strip() or not prompts:
-        raise HTTPException(status_code=400, detail="Brand and at least one prompt are required")
+    if not body.brand.strip():
+        raise HTTPException(status_code=400, detail="Brand is required")
+
+    project_limit, prompt_limit = visibility_limits(user)
+    if prompt_limit <= 0:
+        raise HTTPException(status_code=402, detail={
+            "code": "payment_required",
+            "message": "Your subscription is inactive. Activate a plan to run visibility scans.",
+        })
+
+    # Scan only up to the plan's prompt limit — never more.
+    prompts = [p.strip() for p in body.prompts if p.strip()][:prompt_limit]
+    if not prompts:
+        raise HTTPException(status_code=400, detail="Add at least one prompt")
+
+    # Project identity (brand+domain, or explicit project name). Re-scanning an
+    # existing project replaces it and doesn't count as a new project.
+    proj_key = ((body.project_name or body.brand).strip().lower() + "|" + (body.domain or "").strip().lower())
+    if not user.get("full_access") and user.get("role") != "admin":
+        distinct = await db.visibility.distinct("project_key", {"user_id": user["id"]})
+        if proj_key not in distinct and len(distinct) >= project_limit:
+            raise HTTPException(status_code=402, detail={
+                "code": "project_limit_reached",
+                "message": f"Your plan allows {project_limit} visibility project(s). Upgrade to add more.",
+                "limit": project_limit,
+            })
+
     system = """You simulate how leading generative AI engines respond to user prompts, and whether a given brand is mentioned or recommended in those answers. Base this on your knowledge of the brand's real-world prominence. Respond with ONLY valid minified JSON."""
     prompt = f"""BRAND: {body.brand}{(' (' + body.domain + ')') if body.domain else ''}
 For EACH of the following prompts, predict whether the brand would appear in AI answers across engines (ChatGPT, Claude, Perplexity, Google AI Overview, Gemini, Copilot, Grok).
@@ -1675,13 +1757,16 @@ Return JSON:
 One result object per prompt, same order."""
     res = await llm_json(system, prompt, f"vis-{user['id']}", max_tokens=8000)
 
+    # Replace any prior scan for the same project so re-scans don't pile up.
+    await db.visibility.delete_many({"user_id": user["id"], "project_key": proj_key})
     doc = {
         "id": secrets.token_hex(12),
         "user_id": user["id"],
+        "project_key": proj_key,
         "project_name": (body.project_name or body.brand).strip(),
         "brand": body.brand,
         "domain": body.domain,
-        "seed_prompts": (body.seed_prompts or [])[:12],
+        "seed_prompts": prompts,
         "prompts": prompts,
         "created_at": datetime.now(timezone.utc).isoformat(),
         **res,

@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useSessionState } from "@/hooks/useSessionState";
+import { useAuth } from "@/context/AuthContext";
 import { http, formatApiErrorDetail } from "@/lib/api";
 import {
   startSingleShotJob,
@@ -16,7 +17,7 @@ import { PageHeader, EmptyState } from "@/components/ui-bits";
 import { scoreColor } from "@/components/ScoreGauge";
 import {
   Activity, Loader2, Sparkles, Check, X, Plus, Trash2, Wand2, ChevronDown,
-  ChevronUp, ExternalLink, ShieldCheck, FolderPlus, Folder,
+  ChevronUp, ExternalLink, ShieldCheck, FolderPlus, Folder, Users, Lock,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -92,7 +93,6 @@ function EngineLogo({ engine, present, size = 14 }) {
 function PromptRow({ index, res, brand, domain, expanded, onToggle }) {
   const [loading, setLoading] = useState(false);
   const [sources, setSources] = useState(null);
-  const [enrichedOnce, setEnrichedOnce] = useState(false); // eslint-disable-line no-unused-vars
 
   const rankingCount = ENGINE_ORDER.filter((k) => (res.engines || {})[k]).length;
   const isRanking = res.mentioned && rankingCount > 0;
@@ -137,6 +137,15 @@ function PromptRow({ index, res, brand, domain, expanded, onToggle }) {
             ))}
           </div>
         </div>
+        {res.competitors_mentioned?.length > 0 && (
+          <div className="hidden md:flex items-center gap-1.5 shrink-0 max-w-[240px] px-2" title={`Competitors AI mentions: ${res.competitors_mentioned.join(", ")}`}>
+            <Users size={12} className="text-amber-500 shrink-0" />
+            <span className="text-[11px] text-muted-foreground truncate">
+              {res.competitors_mentioned.slice(0, 3).join(", ")}
+              {res.competitors_mentioned.length > 3 ? ` +${res.competitors_mentioned.length - 3}` : ""}
+            </span>
+          </div>
+        )}
         <div className="flex items-center gap-3 shrink-0">
           <Badge className={`rounded-md border capitalize text-[11px] ${posColor[res.position] || posColor.none}`}>
             {isRanking ? res.position : "not ranking"}
@@ -151,12 +160,6 @@ function PromptRow({ index, res, brand, domain, expanded, onToggle }) {
       {expanded && (
         <div className="border-t border-border/60 bg-muted/20 px-4 py-4">
           {res.note && <p className="text-xs text-muted-foreground italic mb-3">&ldquo;{res.note}&rdquo;</p>}
-          {res.competitors_mentioned?.length > 0 && (
-            <p className="text-xs mb-3">
-              <span className="font-semibold text-foreground">Competitors AI mentions:</span>{" "}
-              <span className="text-muted-foreground">{res.competitors_mentioned.join(", ")}</span>
-            </p>
-          )}
 
           <div className="flex items-center gap-2 mb-2">
             <ExternalLink size={13} className="text-[#6366F1]" />
@@ -277,11 +280,13 @@ function SeedRow({ value, onChange, onRemove, index }) {
 
 export default function Visibility() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const { user } = useAuth();
+  const promptLimit = user?.entitlements?.prompt_limit || 20;
+  const planName = user?.entitlements?.plan_name || (user?.full_access ? "Admin" : "");
   const [brand, setBrand] = useSessionState("visibility:brand", "");
   const [domain, setDomain] = useSessionState("visibility:domain", "");
   const [projectName, setProjectName] = useSessionState("visibility:projectName", "");
   const [seeds, setSeeds] = useSessionState("visibility:seeds", [""]);
-  const [expanding, setExpanding] = useState(false);
   const [suggesting, setSuggesting] = useState(false);
   const [expandedPreview, setExpandedPreview] = useState([]); // prompts after LLM expansion, pre-scan
   const initial = getJobState(JOB_KEY);
@@ -332,8 +337,8 @@ export default function Visibility() {
   };
 
   const suggest = async () => {
-    if (!brand.trim() && !domain.trim()) {
-      toast.error("Enter a brand or domain first");
+    if (!brand.trim() || !domain.trim()) {
+      toast.error("Enter both brand and domain first");
       return;
     }
     setSuggesting(true);
@@ -350,8 +355,9 @@ export default function Visibility() {
           const k = p.toLowerCase();
           if (!seen.has(k)) { seen.add(k); dedup.push(p); }
         }
-        setSeeds(dedup.slice(0, 12));
-        toast.success(`Added ${list.length} suggested seed prompts`);
+        setSeeds(dedup.slice(0, promptLimit));
+        const svc = data?.crawled ? " from your site’s products/services" : "";
+        toast.success(`Added ${Math.min(list.length, promptLimit)} suggested prompts${svc}`);
       }
     } catch (e) {
       toast.error(formatApiErrorDetail(e.response?.data?.detail) || "Could not fetch suggestions");
@@ -361,44 +367,25 @@ export default function Visibility() {
   };
 
   const runScan = async () => {
-    if (!brand.trim() && !domain.trim()) { toast.error("Enter a brand or domain"); return; }
-    if (cleanSeeds.length === 0) { toast.error("Add at least one seed prompt"); return; }
+    if (!brand.trim() || !domain.trim()) { toast.error("Enter both brand and domain"); return; }
+    if (cleanSeeds.length === 0) { toast.error("Add at least one prompt"); return; }
 
-    // 1) Expand seeds → 25-30 prompts (1 cheap LLM call)
-    setExpanding(true);
-    let expandedList = expandedPreview;
-    try {
-      if (expandedPreview.length === 0) {
-        const { data } = await http.post("/visibility/expand-prompts", {
-          brand: brand || domain,
-          domain,
-          seeds: cleanSeeds,
-        });
-        expandedList = data?.prompts || cleanSeeds;
-        setExpandedPreview(expandedList);
-      }
-    } catch (e) {
-      toast.error(formatApiErrorDetail(e.response?.data?.detail) || "Prompt expansion failed");
-      setExpanding(false);
-      return;
-    } finally {
-      setExpanding(false);
-    }
-
-    // 2) Run the actual visibility scan (1 LLM call) with the expanded list
+    // Scan the user's prompts directly — capped to the plan's prompt limit.
+    const finalPrompts = cleanSeeds.slice(0, promptLimit);
+    setExpandedPreview(finalPrompts);
     try {
       await startSingleShotJob({
         key: JOB_KEY,
         postPath: "/visibility",
         postBody: {
-          brand: brand || domain,
-          domain: domain || null,
-          prompts: expandedList,
-          seed_prompts: cleanSeeds,
+          brand: brand.trim(),
+          domain: domain.trim(),
+          prompts: finalPrompts,
+          seed_prompts: finalPrompts,
           project_name: (projectName || brand || domain).trim(),
         },
       });
-      toast.success(`Scanning ${expandedList.length} prompts across AI engines`);
+      toast.success(`Scanning ${finalPrompts.length} prompt${finalPrompts.length === 1 ? "" : "s"} across AI engines`);
     } catch { /* handled in subscription */ }
   };
 
@@ -434,7 +421,7 @@ export default function Visibility() {
       <PageHeader
         overline="Generative Engine (GEO)"
         title="Visibility Tracker"
-        subtitle="Create a project with your brand, add a few seed prompts, and we auto-expand them into 25–30 buyer-intent queries. We scan all 7 AI engines and, for each prompt, reveal the exact sources those engines pull from."
+        subtitle="Create a project with your brand + domain, we crawl your site to suggest buyer prompts, then scan all 7 AI engines. Click any prompt to see the exact sources those engines cite."
       />
 
       {/* Project switcher */}
@@ -504,12 +491,32 @@ export default function Visibility() {
               {r ? "Edit this project or start another" : "New visibility project"}
             </h3>
             <p className="text-xs text-muted-foreground">
-              Give us a few seed prompts — we expand them into 25–30 buyer queries and scan all 7 AI engines.
+              Enter your brand + domain, suggest prompts from your website, then scan all 7 AI engines.
             </p>
           </div>
         </div>
 
         <div className="grid sm:grid-cols-3 gap-4 mb-5">
+          <div>
+            <label className="text-xs uppercase font-bold text-muted-foreground">Brand <span className="text-red-500">*</span></label>
+            <Input
+              value={brand}
+              onChange={(e) => setBrand(e.target.value)}
+              placeholder="e.g. Notion"
+              className="mt-1.5"
+              data-testid="brand-input"
+            />
+          </div>
+          <div>
+            <label className="text-xs uppercase font-bold text-muted-foreground">Domain <span className="text-red-500">*</span></label>
+            <Input
+              value={domain}
+              onChange={(e) => setDomain(e.target.value)}
+              placeholder="notion.so"
+              className="mt-1.5"
+              data-testid="vis-domain-input"
+            />
+          </div>
           <div>
             <label className="text-xs uppercase font-bold text-muted-foreground">Project name (optional)</label>
             <Input
@@ -520,47 +527,31 @@ export default function Visibility() {
               data-testid="project-name-input"
             />
           </div>
-          <div>
-            <label className="text-xs uppercase font-bold text-muted-foreground">Brand</label>
-            <Input
-              value={brand}
-              onChange={(e) => setBrand(e.target.value)}
-              placeholder="e.g. Notion"
-              className="mt-1.5"
-              data-testid="brand-input"
-            />
-          </div>
-          <div>
-            <label className="text-xs uppercase font-bold text-muted-foreground">Domain (optional)</label>
-            <Input
-              value={domain}
-              onChange={(e) => setDomain(e.target.value)}
-              placeholder="notion.so"
-              className="mt-1.5"
-              data-testid="vis-domain-input"
-            />
-          </div>
         </div>
 
         <div className="mb-2 flex items-center justify-between">
-          <label className="text-xs uppercase font-bold text-muted-foreground">Seed prompts</label>
           <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={suggest}
-              disabled={suggesting}
-              className="h-8"
-              data-testid="suggest-prompts-btn"
-            >
-              {suggesting ? <Loader2 size={13} className="mr-1.5 animate-spin" /> : <Wand2 size={13} className="mr-1.5" />}
-              Suggest seeds
-            </Button>
+            <label className="text-xs uppercase font-bold text-muted-foreground">Prompts</label>
+            <span className={`text-[11px] font-bold tabular-nums px-1.5 py-0.5 rounded ${cleanSeeds.length >= promptLimit ? "bg-amber-100 text-amber-700" : "bg-muted text-muted-foreground"}`}>
+              {cleanSeeds.length}/{promptLimit}
+            </span>
+            {planName && <span className="text-[11px] text-muted-foreground">· {planName} plan</span>}
           </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={suggest}
+            disabled={suggesting || !brand.trim() || !domain.trim()}
+            className="h-8"
+            data-testid="suggest-prompts-btn"
+          >
+            {suggesting ? <Loader2 size={13} className="mr-1.5 animate-spin" /> : <Wand2 size={13} className="mr-1.5" />}
+            Suggest from website
+          </Button>
         </div>
         <p className="text-[11px] text-muted-foreground mb-3">
-          Add 3–8 prompts your buyers ask AI engines. We&apos;ll expand them to 25–30 diverse queries.
+          We crawl your site to find your products/services and suggest buyer prompts. Add or remove any — AI scans exactly these ({promptLimit} max on your plan).
         </p>
 
         <div className="space-y-2 mb-3">
@@ -580,30 +571,30 @@ export default function Visibility() {
           variant="outline"
           size="sm"
           onClick={addSeed}
-          disabled={seeds.length >= 12}
+          disabled={seeds.length >= promptLimit}
           className="h-8 mb-5"
           data-testid="add-seed-btn"
         >
-          <Plus size={13} className="mr-1.5" /> Add seed prompt
+          {seeds.length >= promptLimit
+            ? <><Lock size={13} className="mr-1.5" /> Prompt limit reached</>
+            : <><Plus size={13} className="mr-1.5" /> Add prompt</>}
         </Button>
 
         <div className="flex items-center gap-3 pt-4 border-t border-border/60">
           <Button
             onClick={runScan}
-            disabled={loading || expanding}
+            disabled={loading || !brand.trim() || !domain.trim() || cleanSeeds.length === 0}
             className="btn-brand hover:opacity-90"
             data-testid="run-visibility-btn"
           >
-            {expanding ? (
-              <><Loader2 size={16} className="mr-2 animate-spin" /> Expanding prompts…</>
-            ) : loading ? (
+            {loading ? (
               <><Loader2 size={16} className="mr-2 animate-spin" /> Scanning across engines…</>
             ) : (
-              <><Sparkles size={16} className="mr-2" /> Expand &amp; scan project</>
+              <><Sparkles size={16} className="mr-2" /> Scan across AI engines</>
             )}
           </Button>
           <p className="text-[11px] text-muted-foreground">
-            2 tiny LLM calls per project · citations load lazily per prompt (cached 24h).
+            Scans your {cleanSeeds.length || 0} prompt{cleanSeeds.length === 1 ? "" : "s"} across all 7 engines · sources load per prompt (cached 24h).
           </p>
         </div>
       </Card>
@@ -611,35 +602,44 @@ export default function Visibility() {
       {/* Results */}
       {r && (
         <div className="mb-10" data-testid="visibility-result">
+          <div className="flex items-center gap-2 mb-4">
+            <div className="w-8 h-8 rounded-lg bg-[#6366F1]/10 flex items-center justify-center shrink-0">
+              <Activity size={16} className="text-[#6366F1]" />
+            </div>
+            <div className="min-w-0">
+              <h3 className="font-head font-bold truncate">{r.project_name || r.brand}</h3>
+              <p className="text-[11px] text-muted-foreground truncate">{r.brand}{r.domain ? ` · ${r.domain}` : ""}</p>
+            </div>
+          </div>
+
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
-            <Card className="p-4 rounded-xl border-border/60">
-              <div className="text-[10px] uppercase font-bold text-muted-foreground">Visibility Score</div>
-              <div className="font-head text-3xl font-extrabold" style={{ color: scoreColor(r.visibility_score) }}>
-                {r.visibility_score ?? 0}
-              </div>
-            </Card>
-            <Card className="p-4 rounded-xl border-border/60">
-              <div className="text-[10px] uppercase font-bold text-muted-foreground">Share of Voice</div>
-              <div className="font-head text-3xl font-extrabold" style={{ color: scoreColor(r.share_of_voice) }}>
-                {r.share_of_voice ?? 0}
-              </div>
-            </Card>
-            <Card className="p-4 rounded-xl border-border/60">
-              <div className="text-[10px] uppercase font-bold text-muted-foreground">Prompts Ranking</div>
-              <div className="font-head text-3xl font-extrabold text-emerald-600">
-                {rankingSummary.ranking}<span className="text-lg text-muted-foreground">/{rankingSummary.total}</span>
-              </div>
-            </Card>
-            <Card className="p-4 rounded-xl border-border/60">
-              <div className="text-[10px] uppercase font-bold text-muted-foreground">Prompts Scanned</div>
-              <div className="font-head text-3xl font-extrabold">{r.results?.length || 0}</div>
-            </Card>
+            {[
+              { label: "Visibility Score", val: r.visibility_score ?? 0, icon: Activity, color: scoreColor(r.visibility_score), bar: true },
+              { label: "Share of Voice", val: r.share_of_voice ?? 0, icon: Users, color: scoreColor(r.share_of_voice), bar: true },
+              { label: "Prompts Ranking", val: rankingSummary.ranking, suffix: `/${rankingSummary.total}`, icon: Check, color: "#10b981" },
+              { label: "Prompts Scanned", val: r.results?.length || 0, icon: Sparkles, color: "#6366F1" },
+            ].map((m, i) => (
+              <Card key={i} className="p-4 rounded-xl border-border/60 relative overflow-hidden">
+                <div className="absolute top-0 left-0 right-0 h-1" style={{ background: m.color }} />
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-[10px] uppercase font-bold text-muted-foreground">{m.label}</span>
+                  <m.icon size={14} style={{ color: m.color }} />
+                </div>
+                <div className="font-head text-3xl font-extrabold" style={{ color: m.color }}>
+                  {m.val}{m.suffix && <span className="text-lg text-muted-foreground">{m.suffix}</span>}
+                </div>
+                {m.bar && (
+                  <div className="h-1.5 bg-muted rounded-full overflow-hidden mt-2">
+                    <div className="h-full rounded-full transition-all" style={{ width: `${Math.min(100, m.val)}%`, background: m.color }} />
+                  </div>
+                )}
+              </Card>
+            ))}
           </div>
 
           <div className="flex items-center gap-2 mb-3">
-            <Activity size={16} className="text-[#6366F1]" />
             <h3 className="font-head text-lg font-bold">Prompts &amp; ranking across engines</h3>
-            <span className="text-[11px] text-muted-foreground">· click any prompt to see its live sources</span>
+            <span className="text-[11px] text-muted-foreground">· click any prompt to see its cited sources</span>
           </div>
 
           <div className="space-y-2">

@@ -53,6 +53,7 @@ PLANS: Dict[str, Dict[str, Any]] = {
         "name": "Starter",
         "price_usd": 49.0,
         "project_limit": 1,
+        "prompt_limit": 20,
         "features": [FEATURE_DOMAIN, FEATURE_AEO, FEATURE_AGENT],
         "tagline": "Solo founders shipping their first AI-visible page",
         "highlights": [
@@ -67,6 +68,7 @@ PLANS: Dict[str, Dict[str, Any]] = {
         "name": "Growth",
         "price_usd": 99.0,
         "project_limit": 3,
+        "prompt_limit": 50,
         "features": ALL_FEATURES,
         "tagline": "Growing teams tracking multiple brands across AI answers",
         "highlights": [
@@ -81,6 +83,7 @@ PLANS: Dict[str, Dict[str, Any]] = {
         "name": "Pro",
         "price_usd": 199.0,
         "project_limit": 10,
+        "prompt_limit": 50,
         "features": ALL_FEATURES,
         "tagline": "Agencies & platform teams managing many brands",
         "highlights": [
@@ -155,10 +158,18 @@ def entitlements_for(user: dict) -> dict:
     p = plan_of(user)
     exp = _parse_dt(user.get("plan_expires_at"))
     days_left = max(0, int((exp - _now()).total_seconds() // 86400)) if exp else 0
+    is_admin = user.get("role") == "admin" or user.get("full_access")
+    if is_admin:
+        prompt_limit = 50
+    elif p:
+        prompt_limit = p.get("prompt_limit", 20)
+    else:
+        prompt_limit = 0
     return {
         "plan": p["slug"] if p else None,
         "plan_name": p["name"] if p else None,
         "project_limit": p["project_limit"] if p else 0,
+        "prompt_limit": prompt_limit,
         "features": user_features(user),
         "subscription_status": user.get("subscription_status", "none"),
         "plan_expires_at": _to_iso(exp) if exp else None,
