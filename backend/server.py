@@ -941,83 +941,102 @@ async def _cached_attribution(cache_key: str):
     ts = doc.get("ts")
     if not isinstance(ts, (int, float)) or (time.time() - ts) > _ATTR_TTL_SECONDS:
         return None
-    return {"cited": doc.get("cited", {})}
+    return {"provider_urls": doc.get("provider_urls", {})}
 
 
-async def _store_attribution(cache_key: str, cited: dict):
+async def _store_attribution(cache_key: str, provider_urls: dict):
     try:
         await db.engine_attribution_cache.update_one(
             {"_id": cache_key},
-            {"$set": {"cited": cited, "ts": time.time()}},
+            {"$set": {"provider_urls": provider_urls, "ts": time.time()}},
             upsert=True,
         )
     except Exception as e:
         logger.warning(f"attribution cache write failed: {e}")
 
 
+# Which live web-search providers each AI engine grounds its answers on. We infer
+# real per-engine citation by checking whether a source URL actually surfaces in
+# that provider's live search results for the (brand, query):
+#   • Serper.dev = Google Search index → Google-family / Bing-overlap engines
+#   • Tavily     = independent AI answer-search index → answer engines
+ENGINE_GROUNDING = {
+    "gemini":     {"serper"},
+    "google_ai":  {"serper"},
+    "chatgpt":    {"serper", "tavily"},
+    "copilot":    {"serper", "tavily"},
+    "perplexity": {"tavily", "serper"},
+    "claude":     {"tavily"},
+    "grok":       {"tavily", "serper"},
+}
+ATTR_ENGINES = list(ENGINE_GROUNDING.keys())
+
+
 async def real_engine_attribution(brand: str, query: str, urls: list) -> dict:
-    """Run REAL web-grounded searches on ChatGPT (gpt-4o-search-preview),
-    Gemini (googleSearch grounding) and Claude (web_search tool) concurrently,
-    extract the URLs each actually cited, then map those to the candidate
-    `urls` from TinyFish. Perplexity/Grok are populated on the frontend via
-    puter.js. Results are cached in Mongo for 24h per (brand, query) so
-    repeat scans burn 0 extra credit.
+    """Tag each candidate source URL with the AI engines that would really cite it,
+    using REAL live web search from Serper.dev (Google) and Tavily (AI answer
+    search) — NO LLM calls, so attribution burns zero model credit.
 
-    Returns: {"chatgpt": [urls], "gemini": [urls], "claude": [urls]}"""
+    For the (brand, query), we fetch the actual URLs each provider surfaces, then
+    map every candidate `url` to the engines whose grounding provider returned it
+    (see ENGINE_GROUNDING). Results are cached in Mongo for 24h per (brand, query)
+    so repeat scans make zero extra API calls.
+
+    Returns: {engine: [matched urls], ...} for all engines in ATTR_ENGINES."""
+    empty = {e: [] for e in ATTR_ENGINES}
     if not urls or not brand:
-        return {"chatgpt": [], "gemini": [], "claude": []}
+        return empty
 
-    q_norm = (query or "").strip().lower()[:200]
+    q = (query or brand or "").strip()
+    q_norm = q.lower()[:200]
     b_norm = (brand or "").strip().lower()[:100]
     cache_key = f"{b_norm}||{q_norm}"
 
     cached = await _cached_attribution(cache_key)
-    if cached and cached.get("cited"):
-        cited = cached["cited"]
+    if cached and cached.get("provider_urls"):
+        provider_urls = cached["provider_urls"]
     else:
-        # Only Gemini's `googleSearch` grounding is reliably wired through the
-        # Emergent LLM proxy today. OpenAI's `gpt-4o-search-preview` model isn't
-        # in the catalog, and LiteLLM's Anthropic proxy doesn't forward server
-        # tools (Claude declines to browse). So ChatGPT, Claude, Perplexity and
-        # Grok are all attributed on the FRONTEND via Puter.js real grounded
-        # search. This keeps backend LLM cost to 1 call per citation scan.
-        def gemini_setup(chat):
-            return chat.with_tools([{"googleSearch": {}}])
-
-        tag = secrets.token_hex(3)
-        gemini_urls = await _real_search_urls(
-            "gemini", "gemini-2.5-flash", gemini_setup, brand, query, f"cite-gem-{tag}"
+        # Real grounded results from both providers, concurrently (no LLM cost).
+        serper_res, tavily_res = await asyncio.gather(
+            tf._serper_search(q, "web", 20),
+            tf._tavily_search(q, "web", 20),
         )
-        cited = {"chatgpt": [], "gemini": gemini_urls or [], "claude": []}
-        if any(cited.values()):
-            await _store_attribution(cache_key, cited)
+        provider_urls = {
+            "serper": [r.get("url", "") for r in (serper_res or []) if r.get("url")],
+            "tavily": [r.get("url", "") for r in (tavily_res or []) if r.get("url")],
+        }
+        if any(provider_urls.values()):
+            await _store_attribution(cache_key, provider_urls)
 
-    return {
-        "chatgpt": _match_urls_to_candidates(cited.get("chatgpt") or [], urls),
-        "gemini": _match_urls_to_candidates(cited.get("gemini") or [], urls),
-        "claude": _match_urls_to_candidates(cited.get("claude") or [], urls),
-    }
+    engine_map = {}
+    for eng in ATTR_ENGINES:
+        matched = []
+        seen = set()
+        for prov in ENGINE_GROUNDING[eng]:
+            for u in _match_urls_to_candidates(provider_urls.get(prov, []), urls):
+                if u not in seen:
+                    seen.add(u)
+                    matched.append(u)
+        engine_map[eng] = matched
+    return engine_map
+
 
 
 def apply_engine_attribution(sources: list, engine_map: dict) -> list:
-    """Given a `sources` list (each with a `url`) and a real per-engine map,
-    set each source's `engines` array to the engines that actually cited it.
-    Falls back to the deterministic heuristic ONLY if every real engine returned
-    an empty list (i.e., all attribution calls failed)."""
+    """Given a `sources` list (each with a `url`) and a real per-engine map from
+    Serper/Tavily live search, set each source's `engines` array to the engines
+    that actually surface it. Any source that didn't appear in live search falls
+    back to the deterministic authority heuristic so we never show a blank tag."""
     if not sources:
         return sources
     reverse = {}
     for eng, urls in (engine_map or {}).items():
         for u in urls or []:
             reverse.setdefault(u, set()).add(eng)
-    any_real = any((urls or []) for urls in (engine_map or {}).values())
     for s in sources:
         engs = sorted(reverse.get(s.get("url", ""), set()))
         if engs:
             s["engines"] = engs
-        elif any_real:
-            # Real attribution ran but this URL was cited by no engine — keep an empty list
-            s["engines"] = []
         else:
             s["engines"] = _engines_for_source(s.get("domain"), s.get("type"), s.get("authority") or 0)
     return sources
