@@ -19,7 +19,6 @@ import {
   ChevronUp, ExternalLink, ShieldCheck, FolderPlus, Folder,
 } from "lucide-react";
 import { toast } from "sonner";
-import { enrichWithPuterEngines } from "@/lib/puterEngines";
 
 const engineMeta = {
   chatgpt:    { label: "ChatGPT",             domain: "openai.com" },
@@ -93,7 +92,7 @@ function EngineLogo({ engine, present, size = 14 }) {
 function PromptRow({ index, res, brand, domain, expanded, onToggle }) {
   const [loading, setLoading] = useState(false);
   const [sources, setSources] = useState(null);
-  const [enrichedOnce, setEnrichedOnce] = useState(false);
+  const [enrichedOnce, setEnrichedOnce] = useState(false); // eslint-disable-line no-unused-vars
 
   const rankingCount = ENGINE_ORDER.filter((k) => (res.engines || {})[k]).length;
   const isRanking = res.mentioned && rankingCount > 0;
@@ -118,22 +117,7 @@ function PromptRow({ index, res, brand, domain, expanded, onToggle }) {
     }
   };
 
-  // Puter.js enrichment for perplexity/grok/chatgpt/claude — silent on skip.
-  useEffect(() => {
-    if (expanded && Array.isArray(sources) && sources.length > 0 && !enrichedOnce) {
-      setEnrichedOnce(true);
-      (async () => {
-        try {
-          const enriched = await enrichWithPuterEngines({
-            query: res.prompt,
-            brand: brand || "",
-            sources,
-          });
-          setSources(enriched);
-        } catch { /* silent */ }
-      })();
-    }
-  }, [expanded, sources, enrichedOnce, res.prompt, brand]);
+  // Puter.js enrichment removed — engine attribution now comes from the backend.
 
   return (
     <Card className="rounded-xl border-border/60 overflow-hidden" data-testid={`prompt-row-${index}`}>

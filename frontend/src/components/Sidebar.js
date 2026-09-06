@@ -11,12 +11,12 @@ const groups = [
       { to: "/app", label: "Dashboard", icon: LayoutDashboard },
       { to: "/app/projects", label: "Projects", icon: FolderKanban },
       { to: "/app/domain", label: "Domain Analysis", icon: Globe, feature: "domain" },
+      { to: "/app/visibility", label: "AI Visibility", icon: Activity, feature: "visibility" },
     ],
   },
   {
     label: "Generative Engine (GEO)",
     items: [
-      { to: "/app/visibility", label: "Visibility Tracker", icon: Activity, feature: "visibility" },
       { to: "/app/citations", label: "Citation Sources", icon: Link2, feature: "citations" },
       { to: "/app/sentiment", label: "Sentiment Analysis", icon: Heart, feature: "sentiment" },
       { to: "/app/reddit", label: "Reddit Finder", icon: MessageSquare, feature: "reddit" },

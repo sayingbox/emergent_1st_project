@@ -23,6 +23,20 @@ TINYFISH_API_KEY = os.environ.get("TINYFISH_API_KEY", "")
 SEARCH_URL = "https://api.search.tinyfish.ai"
 FETCH_URL = "https://api.fetch.tinyfish.ai"
 
+# Primary web-search providers for AI citation sources.
+# Serper.dev (real Google results — best for `site:` citation queries) is tried
+# first, Tavily (AI search API) second, then TinyFish, then DuckDuckGo. Every URL
+# returned is a REAL search result — we never let the LLM invent links.
+SERPER_API_KEY = os.environ.get("SERPER_API_KEY", "")
+TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY", "")
+SERPER_SEARCH_URL = "https://google.serper.dev/search"
+SERPER_NEWS_URL = "https://google.serper.dev/news"
+TAVILY_SEARCH_URL = "https://api.tavily.com/search"
+
+# Cap concurrency against the external search providers so a burst of ~18
+# concurrent citation-source searches doesn't trip provider rate limits.
+_PROVIDER_SEM = asyncio.Semaphore(6)
+
 # Global throttle so concurrent callers (reviews + opportunities + competitor
 # intel all fire at once during a project scan) don't trip TinyFish's rate limit.
 # A semaphore caps concurrency; a paced lock spaces requests over time.
@@ -126,12 +140,93 @@ def _ddgs_search_sync(query: str, domain_type: str, max_results: int) -> list:
         return []
 
 
+async def _serper_search(query: str, domain_type: str, max_results: int) -> list:
+    """Real Google results via Serper.dev. Returns TinyFish-shaped dicts."""
+    if not SERPER_API_KEY:
+        return []
+    is_news = domain_type == "news"
+    url = SERPER_NEWS_URL if is_news else SERPER_SEARCH_URL
+    headers = {"X-API-KEY": SERPER_API_KEY, "Content-Type": "application/json"}
+    body = {"q": query, "num": max(10, max_results)}
+    try:
+        async with _PROVIDER_SEM:
+            async with httpx.AsyncClient(timeout=25) as client:
+                r = await client.post(url, json=body, headers=headers)
+                r.raise_for_status()
+                data = r.json()
+    except Exception as e:
+        logger.warning(f"serper search failed for '{query}': {e}")
+        return []
+    items = data.get("news") if is_news else data.get("organic")
+    out = []
+    for it in (items or []):
+        link = it.get("link") or ""
+        if not link or "/external_clicks" in link or "/event_tracking" in link:
+            continue
+        host = host_of(link)
+        out.append({
+            "url": link,
+            "title": it.get("title") or "",
+            "snippet": it.get("snippet") or "",
+            "site_name": it.get("source") or host,
+            "date": it.get("date") or "",
+        })
+    return out[:max_results]
+
+
+async def _tavily_search(query: str, domain_type: str, max_results: int) -> list:
+    """Real web results via Tavily AI search. Returns TinyFish-shaped dicts."""
+    if not TAVILY_API_KEY:
+        return []
+    body = {
+        "api_key": TAVILY_API_KEY,
+        "query": query,
+        "max_results": max(5, max_results),
+        "topic": "news" if domain_type == "news" else "general",
+        "search_depth": "basic",
+    }
+    try:
+        async with _PROVIDER_SEM:
+            async with httpx.AsyncClient(timeout=30) as client:
+                r = await client.post(TAVILY_SEARCH_URL, json=body,
+                                      headers={"Content-Type": "application/json"})
+                r.raise_for_status()
+                data = r.json()
+    except Exception as e:
+        logger.warning(f"tavily search failed for '{query}': {e}")
+        return []
+    out = []
+    for it in (data.get("results") or []):
+        link = it.get("url") or ""
+        if not link:
+            continue
+        out.append({
+            "url": link,
+            "title": it.get("title") or "",
+            "snippet": (it.get("content") or "")[:400],
+            "site_name": host_of(link),
+            "date": it.get("published_date") or "",
+        })
+    return out[:max_results]
+
+
 async def tf_search(query: str, domain_type: str = "web", max_results: int = 10,
                     recency_minutes: int = None, purpose: str = None, page: int = None) -> list:
-    """Run one web/news search. Uses TinyFish when a key is configured; otherwise
-    falls back to DuckDuckGo so results remain real URLs (never model-invented)."""
+    """Run one web/news search for REAL URLs (never model-invented).
+
+    Provider priority: Serper.dev (Google) → Tavily → TinyFish → DuckDuckGo.
+    The first provider that returns results wins."""
+    # 1) Serper.dev — best for `site:` citation-source queries
+    serper = await _serper_search(query, domain_type, max_results)
+    if serper:
+        return serper
+    # 2) Tavily — AI search API
+    tavily = await _tavily_search(query, domain_type, max_results)
+    if tavily:
+        return tavily
+    # 3) TinyFish (if configured)
     if not TINYFISH_API_KEY:
-        # DuckDuckGo fallback: real URLs, no key required
+        # 4) DuckDuckGo fallback: real URLs, no key required
         return await asyncio.to_thread(_ddgs_search_sync, query, domain_type, max_results)
     params = {"query": query}
     if domain_type and domain_type != "web":
