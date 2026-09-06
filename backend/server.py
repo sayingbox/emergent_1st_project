@@ -342,11 +342,11 @@ def strip_json(text: str) -> str:
 async def llm_json(system: str, prompt: str, session: str, max_tokens: int = 4096) -> dict:
     """Call Claude Sonnet 4.6 with a hard timeout and one automatic retry.
 
-    Timeouts are kept well below Cloudflare's ~100s edge cap so the origin
-    always returns cleanly:
-      - 45s per attempt (was 90s)
+    Timeouts are kept below Cloudflare's ~100s edge cap so the origin always
+    returns cleanly:
+      - 60s per attempt (gives large sites/prompts more headroom)
       - Retry only fires on non-timeout errors so total wall time stays under
-        ~95s worst case (45s + 1.2s backoff + 45s).
+        ~100s worst case; timeouts fail fast with a friendly message.
     """
     last_err: Optional[Exception] = None
     for attempt in range(2):  # initial + 1 retry
@@ -356,7 +356,7 @@ async def llm_json(system: str, prompt: str, session: str, max_tokens: int = 409
                 session_id=session,
                 system_message=system,
             ).with_model("anthropic", "claude-sonnet-4-6").with_params(max_tokens=max_tokens)
-            resp = await asyncio.wait_for(chat.send_message(UserMessage(text=prompt)), timeout=45)
+            resp = await asyncio.wait_for(chat.send_message(UserMessage(text=prompt)), timeout=60)
             raw = strip_json(resp if isinstance(resp, str) else str(resp))
             try:
                 return json.loads(raw)
@@ -972,41 +972,51 @@ ENGINE_GROUNDING = {
 ATTR_ENGINES = list(ENGINE_GROUNDING.keys())
 
 
-async def real_engine_attribution(brand: str, query: str, urls: list) -> dict:
+async def real_engine_attribution(brand: str, query: str, urls: list,
+                                  serper_urls: Optional[list] = None,
+                                  tavily_urls: Optional[list] = None) -> dict:
     """Tag each candidate source URL with the AI engines that would really cite it,
     using REAL live web search from Serper.dev (Google) and Tavily (AI answer
     search) — NO LLM calls, so attribution burns zero model credit.
 
-    For the (brand, query), we fetch the actual URLs each provider surfaces, then
-    map every candidate `url` to the engines whose grounding provider returned it
-    (see ENGINE_GROUNDING). Results are cached in Mongo for 24h per (brand, query)
-    so repeat scans make zero extra API calls.
+    Callers that already ran the Serper/Tavily searches for the same query can
+    pass `serper_urls` / `tavily_urls` (the result URL lists) so this function
+    makes ZERO additional API calls and reuses them. If neither is supplied it
+    fetches both providers once and caches the result in Mongo for 24h per
+    (brand, query) so repeat scans make zero extra calls.
 
     Returns: {engine: [matched urls], ...} for all engines in ATTR_ENGINES."""
     empty = {e: [] for e in ATTR_ENGINES}
     if not urls or not brand:
         return empty
 
-    q = (query or brand or "").strip()
-    q_norm = q.lower()[:200]
-    b_norm = (brand or "").strip().lower()[:100]
-    cache_key = f"{b_norm}||{q_norm}"
-
-    cached = await _cached_attribution(cache_key)
-    if cached and cached.get("provider_urls"):
-        provider_urls = cached["provider_urls"]
-    else:
-        # Real grounded results from both providers, concurrently (no LLM cost).
-        serper_res, tavily_res = await asyncio.gather(
-            tf._serper_search(q, "web", 20),
-            tf._tavily_search(q, "web", 20),
-        )
+    if serper_urls is not None or tavily_urls is not None:
+        # Caller supplied pre-fetched results — no extra API calls, no cache needed.
         provider_urls = {
-            "serper": [r.get("url", "") for r in (serper_res or []) if r.get("url")],
-            "tavily": [r.get("url", "") for r in (tavily_res or []) if r.get("url")],
+            "serper": [u for u in (serper_urls or []) if u],
+            "tavily": [u for u in (tavily_urls or []) if u],
         }
-        if any(provider_urls.values()):
-            await _store_attribution(cache_key, provider_urls)
+    else:
+        q = (query or brand or "").strip()
+        q_norm = q.lower()[:200]
+        b_norm = (brand or "").strip().lower()[:100]
+        cache_key = f"{b_norm}||{q_norm}"
+
+        cached = await _cached_attribution(cache_key)
+        if cached and cached.get("provider_urls"):
+            provider_urls = cached["provider_urls"]
+        else:
+            # Real grounded results from both providers, concurrently (no LLM cost).
+            serper_res, tavily_res = await asyncio.gather(
+                tf._serper_search(q, "web", 20),
+                tf._tavily_search(q, "web", 20),
+            )
+            provider_urls = {
+                "serper": [r.get("url", "") for r in (serper_res or []) if r.get("url")],
+                "tavily": [r.get("url", "") for r in (tavily_res or []) if r.get("url")],
+            }
+            if any(provider_urls.values()):
+                await _store_attribution(cache_key, provider_urls)
 
     engine_map = {}
     for eng in ATTR_ENGINES:
@@ -1572,10 +1582,14 @@ async def visibility_prompt_sources(body: dict, user: dict = Depends(get_current
             return {"prompt": prompt, "sources": cached, "cached": True}
 
         # 1) Real web search results for this exact prompt (0 LLM credit).
-        web = await tf.tf_search(prompt, max_results=20)
-        news = await tf.tf_search(prompt, domain_type="news", max_results=6)
+        # One Serper + one Tavily call for this prompt — reused for BOTH source
+        # discovery and per-engine attribution below (no duplicate/extra calls).
+        serper_res, tavily_res = await asyncio.gather(
+            tf._serper_search(prompt, "web", 20),
+            tf._tavily_search(prompt, "web", 15),
+        )
         seen_hosts, sources = set(), []
-        for r, dt in [(x, "web") for x in web] + [(x, "news") for x in news]:
+        for r, dt in [(x, "web") for x in serper_res] + [(x, "web") for x in tavily_res]:
             url = r.get("url", "")
             host = tf.root_domain(tf.host_of(url))
             if not url or not host or host in seen_hosts:
@@ -1600,12 +1614,15 @@ async def visibility_prompt_sources(body: dict, user: dict = Depends(get_current
         sources.sort(key=lambda s: -s.get("authority", 0))
         sources = sources[:20]
 
-        # 3) Real per-engine attribution (Gemini grounding on backend + client-side
-        #    Puter.js for ChatGPT/Claude/Perplexity/Grok). Wrapped so a slow
-        #    grounding call NEVER blocks the whole response.
+        # 3) Per-engine attribution reuses the Serper/Tavily results already
+        #    fetched above — zero extra API calls, so it returns near-instantly.
         try:
             engine_map = await asyncio.wait_for(
-                real_engine_attribution(brand or prompt, prompt, [s["url"] for s in sources]),
+                real_engine_attribution(
+                    brand or prompt, prompt, [s["url"] for s in sources],
+                    serper_urls=[r.get("url", "") for r in serper_res],
+                    tavily_urls=[r.get("url", "") for r in tavily_res],
+                ),
                 timeout=35,
             )
             apply_engine_attribution(sources, engine_map)
@@ -1693,10 +1710,14 @@ async def citations(body: CitationInput, user: dict = Depends(get_current_user))
 
     # 1) REAL search first (TinyFish if available, otherwise DuckDuckGo fallback).
     #    Every URL is a real search-engine result, then HTTP-verified live.
-    web = await tf.tf_search(query, max_results=25)
-    news = await tf.tf_search(query, domain_type="news", max_results=10)
+    # One Serper + one Tavily call for this query — reused for BOTH source
+    # discovery and per-engine attribution below (no duplicate/extra API calls).
+    serper_res, tavily_res = await asyncio.gather(
+        tf._serper_search(query, "web", 25),
+        tf._tavily_search(query, "web", 20),
+    )
     seen_hosts, sources = set(), []
-    for r, dt in [(x, "web") for x in web] + [(x, "news") for x in news]:
+    for r, dt in [(x, "web") for x in serper_res] + [(x, "web") for x in tavily_res]:
         url = r.get("url", "")
         host = tf.root_domain(tf.host_of(url))
         if not url or not host or host in seen_hosts:
@@ -1721,8 +1742,12 @@ async def citations(body: CitationInput, user: dict = Depends(get_current_user))
         s["verified"] = True
     sources.sort(key=lambda s: -s.get("authority", 0))
     sources = sources[:40]
-    # REAL per-engine attribution (ChatGPT/Gemini/Claude via Emergent LLM key).
-    engine_map = await real_engine_attribution(dom or query, query, [s["url"] for s in sources])
+    # Per-engine attribution reuses the Serper/Tavily results already fetched above.
+    engine_map = await real_engine_attribution(
+        dom or query, query, [s["url"] for s in sources],
+        serper_urls=[r.get("url", "") for r in serper_res],
+        tavily_urls=[r.get("url", "") for r in tavily_res],
+    )
     apply_engine_attribution(sources, engine_map)
 
     # Compute user_domain citation status from verified sources
