@@ -827,7 +827,7 @@ async def brand_presence_scan(brand: str, domain: str) -> dict:
     if not brand:
         return {"platforms": [], "found_count": 0}
     queries = [f"{brand} site:{site}" for (_, _, site) in _PROJECT_PLATFORMS]
-    results = await tf.tf_search_many(queries, max_results=3)
+    results = await tf.tf_search_many(queries, max_results=3, prefer="tinyfish")
     prepared = []
     candidate_urls = set()
     for (name, group, site), res in zip(_PROJECT_PLATFORMS, results):
@@ -867,7 +867,7 @@ async def pr_list_scan(brand: str, domain: str) -> list:
     tasks = []
     for q in queries:
         for pg in (1, 2):
-            tasks.append(tf.tf_search(q, max_results=12, page=pg))
+            tasks.append(tf.tf_search(q, max_results=12, page=pg, prefer="tinyfish"))
     batches = await asyncio.gather(*tasks)
     seen, press = set(), []
     for b in batches:

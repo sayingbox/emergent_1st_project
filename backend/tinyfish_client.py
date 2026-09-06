@@ -210,24 +210,11 @@ async def _tavily_search(query: str, domain_type: str, max_results: int) -> list
     return out[:max_results]
 
 
-async def tf_search(query: str, domain_type: str = "web", max_results: int = 10,
-                    recency_minutes: int = None, purpose: str = None, page: int = None) -> list:
-    """Run one web/news search for REAL URLs (never model-invented).
-
-    Provider priority: Serper.dev (Google) → Tavily → TinyFish → DuckDuckGo.
-    The first provider that returns results wins."""
-    # 1) Serper.dev — best for `site:` citation-source queries
-    serper = await _serper_search(query, domain_type, max_results)
-    if serper:
-        return serper
-    # 2) Tavily — AI search API
-    tavily = await _tavily_search(query, domain_type, max_results)
-    if tavily:
-        return tavily
-    # 3) TinyFish (if configured)
+async def _tinyfish_search(query: str, domain_type: str, max_results: int,
+                           recency_minutes: int = None, purpose: str = None, page: int = None) -> list:
+    """Real web search via the TinyFish Search API. Returns TinyFish-shaped dicts."""
     if not TINYFISH_API_KEY:
-        # 4) DuckDuckGo fallback: real URLs, no key required
-        return await asyncio.to_thread(_ddgs_search_sync, query, domain_type, max_results)
+        return []
     params = {"query": query}
     if domain_type and domain_type != "web":
         params["domain_type"] = domain_type
@@ -262,10 +249,45 @@ async def tf_search(query: str, domain_type: str = "web", max_results: int = 10,
     return []
 
 
+async def tf_search(query: str, domain_type: str = "web", max_results: int = 10,
+                    recency_minutes: int = None, purpose: str = None, page: int = None,
+                    prefer: str = None) -> list:
+    """Run one web/news search for REAL URLs (never model-invented).
+
+    prefer="tinyfish" → TinyFish Search API first (used by PR Coverage &
+      Brand Consistency, which rely on TinyFish web-search + fetch), falling
+      back to Serper → Tavily → DuckDuckGo if TinyFish returns nothing.
+    default → Serper.dev (Google) → Tavily → TinyFish → DuckDuckGo (used by
+      Prompt Ranking & AI Citation Sources)."""
+    if prefer == "tinyfish":
+        tfres = await _tinyfish_search(query, domain_type, max_results, recency_minutes, purpose, page)
+        if tfres:
+            return tfres
+        serper = await _serper_search(query, domain_type, max_results)
+        if serper:
+            return serper
+        tavily = await _tavily_search(query, domain_type, max_results)
+        if tavily:
+            return tavily
+        return await asyncio.to_thread(_ddgs_search_sync, query, domain_type, max_results)
+
+    # Default: Serper → Tavily → TinyFish → DuckDuckGo
+    serper = await _serper_search(query, domain_type, max_results)
+    if serper:
+        return serper
+    tavily = await _tavily_search(query, domain_type, max_results)
+    if tavily:
+        return tavily
+    tfres = await _tinyfish_search(query, domain_type, max_results, recency_minutes, purpose, page)
+    if tfres:
+        return tfres
+    return await asyncio.to_thread(_ddgs_search_sync, query, domain_type, max_results)
+
+
 async def tf_search_many(queries: list, domain_type: str = "web", max_results: int = 6,
-                         purpose: str = None) -> list:
+                         purpose: str = None, prefer: str = None) -> list:
     """Run several searches concurrently; returns a list aligned with `queries`."""
-    tasks = [tf_search(q, domain_type=domain_type, max_results=max_results, purpose=purpose) for q in queries]
+    tasks = [tf_search(q, domain_type=domain_type, max_results=max_results, purpose=purpose, prefer=prefer) for q in queries]
     return await asyncio.gather(*tasks)
 
 

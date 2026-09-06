@@ -2014,7 +2014,7 @@ async def brand_consistency(body: BrandConsistencyInput, user: dict = Depends(ge
 
     # 1) Real per-platform searches (concurrent) -> real, verifiable listing URLs
     queries = [f"{brand_term} site:{site}" for (_, _, site) in BRAND_PLATFORMS]
-    per_platform = await tf.tf_search_many(queries, max_results=4)
+    per_platform = await tf.tf_search_many(queries, max_results=4, prefer="tinyfish")
 
     platforms, evidence_for_llm = [], []
     # Collect all top-URL candidates for a single concurrent liveness check
@@ -2053,7 +2053,7 @@ async def brand_consistency(body: BrandConsistencyInput, user: dict = Depends(ge
     if is_domain:
         home_url = f"https://{q}"
     else:
-        web = await tf.tf_search(brand_term, max_results=5)
+        web = await tf.tf_search(brand_term, max_results=5, prefer="tinyfish")
         if web:
             home_url = web[0].get("url")
             domain_host = tf.root_domain(tf.host_of(home_url))
@@ -2151,7 +2151,7 @@ async def pr_coverage(body: PRInput, user: dict = Depends(get_current_user)):
     tasks = []
     for bq in base_queries:
         for pg in (1, 2, 3):
-            tasks.append(tf.tf_search(bq, max_results=15, page=pg))
+            tasks.append(tf.tf_search(bq, max_results=15, page=pg, prefer="tinyfish"))
     searches = await asyncio.gather(*tasks)
     REDIRECT_HOSTS = {"google.com", "bing.com", "duckduckgo.com", "news.google.com", "yahoo.com"}
     # NOT press: directories, review/listing sites, reference, social, community, app stores
