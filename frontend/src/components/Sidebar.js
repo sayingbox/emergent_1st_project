@@ -2,13 +2,12 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { http } from "@/lib/api";
-import { LayoutDashboard, Globe, Activity, Link2, MessageSquare, FileText, LogOut, FolderKanban, Heart, Bot, ShieldCheck, Newspaper, Lock } from "lucide-react";
+import { Globe, Activity, Link2, MessageSquare, FileText, LogOut, FolderKanban, Heart, Bot, ShieldCheck, Newspaper, Lock } from "lucide-react";
 
 const groups = [
   {
     label: "Overview",
     items: [
-      { to: "/app", label: "Dashboard", icon: LayoutDashboard },
       { to: "/app/projects", label: "Projects", icon: FolderKanban },
       { to: "/app/domain", label: "Domain Analysis", icon: Globe, feature: "domain" },
       { to: "/app/visibility", label: "AI Visibility", icon: Activity, feature: "visibility" },
@@ -44,7 +43,7 @@ export function Sidebar() {
   const navigate = useNavigate();
   const [unread, setUnread] = useState(0);
 
-  const isActive = (to) => (to === "/app" ? pathname === "/app" : pathname.startsWith(to));
+  const isActive = (to) => (to === "/app" ? pathname === "/app" : (pathname === to || pathname.startsWith(to + "/")));
 
   useEffect(() => {
     let cancelled = false;
@@ -139,7 +138,7 @@ export function MobileTopbar() {
       </div>
       <div className="flex gap-1 overflow-x-auto px-3 pb-2">
         {flat.map((it) => {
-          const active = it.to === "/app" ? pathname === "/app" : pathname.startsWith(it.to);
+          const active = it.to === "/app" ? pathname === "/app" : (pathname === it.to || pathname.startsWith(it.to + "/"));
           return (
             <Link key={it.to} to={it.to}
               className={`whitespace-nowrap px-3 py-1.5 rounded-md text-xs font-medium ${active ? "bg-[#6366F1] text-white shadow-[0_4px_16px_-4px_rgba(99,102,241,0.6)]" : "text-slate-500 hover:bg-slate-100"}`}>

@@ -138,11 +138,12 @@ function PromptRow({ index, res, brand, domain, expanded, onToggle }) {
           </div>
         </div>
         {res.competitors_mentioned?.length > 0 && (
-          <div className="hidden md:flex items-center gap-1.5 shrink-0 max-w-[240px] px-2" title={`Competitors AI mentions: ${res.competitors_mentioned.join(", ")}`}>
-            <Users size={12} className="text-amber-500 shrink-0" />
-            <span className="text-[11px] text-muted-foreground truncate">
-              {res.competitors_mentioned.slice(0, 3).join(", ")}
-              {res.competitors_mentioned.length > 3 ? ` +${res.competitors_mentioned.length - 3}` : ""}
+          <div className="hidden md:flex items-center gap-2 shrink-0 max-w-[340px] ml-4 pl-4 border-l border-border/60" title={`Competitors AI mentions: ${res.competitors_mentioned.join(", ")}`}>
+            <Users size={14} className="text-amber-500 shrink-0" />
+            <span className="text-xs text-muted-foreground truncate">
+              <span className="text-foreground/50 font-medium mr-1">vs</span>
+              {res.competitors_mentioned.slice(0, 4).join(", ")}
+              {res.competitors_mentioned.length > 4 ? ` +${res.competitors_mentioned.length - 4}` : ""}
             </span>
           </div>
         )}
